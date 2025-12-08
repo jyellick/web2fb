@@ -98,18 +98,6 @@ if (DISPLAY_URL === 'https://example.com') {
     return allImagesLoaded && noNetworkActivity;
   }, { timeout: 30000 });
 
-  // Check for background image on body or main container
-  const bgInfo = await page.evaluate(() => {
-    const body = document.body;
-    const bgImage = window.getComputedStyle(body).backgroundImage;
-    return {
-      element: 'body',
-      backgroundImage: bgImage,
-      isLoaded: bgImage !== 'none' && !bgImage.includes('data:')
-    };
-  });
-  console.log('Background image info:', bgInfo);
-
   console.log('All images loaded, page ready');
 
   console.log('Setting up MutationObserver on clock element...');
