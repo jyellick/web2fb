@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  dakboard-renderer:
+    build: .
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DISPLAY_URL=${DISPLAY_URL}
+      - WIDTH=${WIDTH:-1920}
+      - HEIGHT=${HEIGHT:-1080}
+      - HTTP_PORT=${HTTP_PORT:-3000}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

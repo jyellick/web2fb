@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+*.png
+screenshot_*
+test.png
+latest.png
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+README.md
