@@ -6,7 +6,6 @@ const DISPLAY_URL = process.env.DISPLAY_URL || 'https://example.com';
 const WIDTH = parseInt(process.env.WIDTH || '1920', 10);
 const HEIGHT = parseInt(process.env.HEIGHT || '1080', 10);
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3000', 10);
-const SCREENSHOT_PATH = 'latest.png';
 
 if (DISPLAY_URL === 'https://example.com') {
   console.error('ERROR: DISPLAY_URL environment variable is required');
@@ -20,15 +19,6 @@ const streamClients = new Set();
 (async () => {
   // Start HTTP server
   const app = express();
-
-  app.get('/latest.png', (req, res) => {
-    res.sendFile(path.join(__dirname, SCREENSHOT_PATH), (err) => {
-      if (err) {
-        console.error('Error serving image:', err);
-        res.status(404).send('Image not yet available');
-      }
-    });
-  });
 
   app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -65,8 +55,7 @@ const streamClients = new Set();
 
   app.listen(HTTP_PORT, () => {
     console.log(`HTTP server listening on port ${HTTP_PORT}`);
-    console.log(`Image available at: http://localhost:${HTTP_PORT}/latest.png`);
-    console.log(`Video stream available at: http://localhost:${HTTP_PORT}/stream.mjpeg`);
+    console.log(`MJPEG stream available at: http://localhost:${HTTP_PORT}/stream.mjpeg`);
   });
 
   // Launch browser and start capturing
@@ -152,9 +141,6 @@ const streamClients = new Set();
 
   // Set up MutationObserver to watch for clock changes
   await page.exposeFunction('onClockChange', async () => {
-    // Capture PNG for static endpoint
-    await page.screenshot({ path: SCREENSHOT_PATH });
-
     // Capture JPEG for video stream
     const jpegBuffer = await page.screenshot({
       type: 'jpeg',
@@ -181,7 +167,7 @@ const streamClients = new Set();
 
     lastUpdateTime = Date.now(); // Update watchdog timer
     const timestamp = new Date().toISOString();
-    console.log(`Updated ${SCREENSHOT_PATH} at ${timestamp} (${streamClients.size} stream clients)`);
+    console.log(`Frame captured at ${timestamp} (${streamClients.size} stream clients)`);
   });
 
   await page.evaluate(() => {
