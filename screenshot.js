@@ -13,6 +13,10 @@ if (DISPLAY_URL === 'https://example.com') {
   process.exit(1);
 }
 
+// Global state for video streaming
+let latestFrameBuffer = null;
+const streamClients = new Set();
+
 (async () => {
   // Start HTTP server
   const app = express();
@@ -30,9 +34,39 @@ if (DISPLAY_URL === 'https://example.com') {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  // MJPEG video stream endpoint
+  app.get('/stream.mjpeg', (req, res) => {
+    console.log('New MJPEG stream client connected');
+
+    res.writeHead(200, {
+      'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Connection': 'close'
+    });
+
+    // Send initial frame if available
+    if (latestFrameBuffer) {
+      res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${latestFrameBuffer.length}\r\n\r\n`);
+      res.write(latestFrameBuffer);
+      res.write('\r\n');
+    }
+
+    // Add client to stream set
+    streamClients.add(res);
+
+    // Remove client on disconnect
+    req.on('close', () => {
+      streamClients.delete(res);
+      console.log('MJPEG stream client disconnected');
+    });
+  });
+
   app.listen(HTTP_PORT, () => {
     console.log(`HTTP server listening on port ${HTTP_PORT}`);
     console.log(`Image available at: http://localhost:${HTTP_PORT}/latest.png`);
+    console.log(`Video stream available at: http://localhost:${HTTP_PORT}/stream.mjpeg`);
   });
 
   // Launch browser and start capturing
@@ -118,10 +152,36 @@ if (DISPLAY_URL === 'https://example.com') {
 
   // Set up MutationObserver to watch for clock changes
   await page.exposeFunction('onClockChange', async () => {
+    // Capture PNG for static endpoint
     await page.screenshot({ path: SCREENSHOT_PATH });
+
+    // Capture JPEG for video stream
+    const jpegBuffer = await page.screenshot({
+      type: 'jpeg',
+      quality: 85
+    });
+
+    // Store latest frame
+    latestFrameBuffer = jpegBuffer;
+
+    // Broadcast to all connected stream clients
+    if (streamClients.size > 0) {
+      const frame = `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpegBuffer.length}\r\n\r\n`;
+      streamClients.forEach(client => {
+        try {
+          client.write(frame);
+          client.write(jpegBuffer);
+          client.write('\r\n');
+        } catch (err) {
+          // Client disconnected, will be removed by close handler
+          streamClients.delete(client);
+        }
+      });
+    }
+
     lastUpdateTime = Date.now(); // Update watchdog timer
     const timestamp = new Date().toISOString();
-    console.log(`Updated ${SCREENSHOT_PATH} at ${timestamp}`);
+    console.log(`Updated ${SCREENSHOT_PATH} at ${timestamp} (${streamClients.size} stream clients)`);
   });
 
   await page.evaluate(() => {
