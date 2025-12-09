@@ -3,8 +3,6 @@ const sharp = require('sharp');
 const fs = require('fs');
 
 const DISPLAY_URL = process.env.DISPLAY_URL || 'https://example.com';
-const WIDTH = parseInt(process.env.WIDTH || '1920', 10);
-const HEIGHT = parseInt(process.env.HEIGHT || '1080', 10);
 const FRAMEBUFFER_DEVICE = process.env.FRAMEBUFFER_DEVICE || '/dev/fb0';
 
 if (DISPLAY_URL === 'https://example.com') {
@@ -38,12 +36,14 @@ function detectFramebuffer() {
   } catch (err) {
     // Fallback to common settings if detection fails
     console.warn('Could not detect framebuffer properties, using defaults');
+    const fallbackWidth = parseInt(process.env.WIDTH || '1920', 10);
+    const fallbackHeight = parseInt(process.env.HEIGHT || '1080', 10);
     return {
-      width: WIDTH,
-      height: HEIGHT,
+      width: fallbackWidth,
+      height: fallbackHeight,
       bpp: 32,
       bytesPerPixel: 4,
-      stride: WIDTH * 4
+      stride: fallbackWidth * 4
     };
   }
 }
@@ -64,28 +64,23 @@ function openFramebuffer() {
 // Write image to framebuffer
 async function writeToFramebuffer(screenshotBuffer) {
   try {
-    // Convert screenshot to raw RGB/RGBA buffer matching framebuffer format
-    let sharpImage = sharp(screenshotBuffer);
-
-    // Resize if needed to match framebuffer dimensions
-    if (WIDTH !== fbInfo.width || HEIGHT !== fbInfo.height) {
-      sharpImage = sharpImage.resize(fbInfo.width, fbInfo.height, {
-        fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 1 }
-      });
-    }
+    // Screenshot is already at framebuffer resolution, just convert format
+    let sharpImage = sharp(screenshotBuffer, {
+      sequentialRead: true,
+      limitInputPixels: false
+    });
 
     // Convert to raw buffer based on framebuffer format
     let rawBuffer;
     if (fbInfo.bpp === 32) {
-      // RGBA8888 or BGRA8888
-      rawBuffer = await sharpImage.raw().toBuffer();
+      // RGBA8888
+      rawBuffer = await sharpImage.ensureAlpha().raw().toBuffer();
     } else if (fbInfo.bpp === 24) {
       // RGB888
-      rawBuffer = await sharpImage.raw().toBuffer();
+      rawBuffer = await sharpImage.removeAlpha().raw().toBuffer();
     } else if (fbInfo.bpp === 16) {
       // RGB565 - need conversion
-      const rgbBuffer = await sharpImage.ensureAlpha().raw().toBuffer();
+      const rgbBuffer = await sharpImage.removeAlpha().raw().toBuffer();
       rawBuffer = convertToRGB565(rgbBuffer);
     } else {
       throw new Error(`Unsupported framebuffer format: ${fbInfo.bpp}bpp`);
@@ -157,10 +152,11 @@ function convertToRGB565(rgbaBuffer) {
     });
   });
 
-  // Set viewport
+  // Set viewport to match framebuffer dimensions (no resize needed!)
+  console.log(`Setting viewport to framebuffer dimensions: ${fbInfo.width}x${fbInfo.height}`);
   await page.setViewport({
-    width: WIDTH,
-    height: HEIGHT,
+    width: fbInfo.width,
+    height: fbInfo.height,
     deviceScaleFactor: 1,
   });
 
@@ -209,7 +205,11 @@ function convertToRGB565(rgbaBuffer) {
 
   // Set up MutationObserver
   await page.exposeFunction('onClockChange', async () => {
-    const screenshot = await page.screenshot({ type: 'png' });
+    // Use JPEG for faster capture and processing
+    const screenshot = await page.screenshot({
+      type: 'jpeg',
+      quality: 90  // Good quality, faster than PNG
+    });
     await writeToFramebuffer(screenshot);
     lastUpdateTime = Date.now();
     const timestamp = new Date().toISOString();
