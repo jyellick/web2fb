@@ -102,9 +102,24 @@ if (DISPLAY_URL === 'https://example.com') {
 
   console.log('Setting up MutationObserver on clock element...');
 
+  // Watchdog: Track last update time and restart if stuck
+  let lastUpdateTime = Date.now();
+  const WATCHDOG_TIMEOUT = 30000; // 30 seconds
+
+  setInterval(() => {
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastUpdateTime;
+
+    if (timeSinceLastUpdate > WATCHDOG_TIMEOUT) {
+      console.error(`WATCHDOG: No updates for ${timeSinceLastUpdate}ms. Restarting...`);
+      process.exit(1); // Docker will restart the container
+    }
+  }, 10000); // Check every 10 seconds
+
   // Set up MutationObserver to watch for clock changes
   await page.exposeFunction('onClockChange', async () => {
     await page.screenshot({ path: SCREENSHOT_PATH });
+    lastUpdateTime = Date.now(); // Update watchdog timer
     const timestamp = new Date().toISOString();
     console.log(`Updated ${SCREENSHOT_PATH} at ${timestamp}`);
   });
