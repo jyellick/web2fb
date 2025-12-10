@@ -4,3 +4,4 @@ screenshot_*
 npm-debug.log
 .DS_Store
 .env
+test-fb/
