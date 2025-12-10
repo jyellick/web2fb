@@ -1,0 +1,26 @@
+[Unit]
+Description=PageScrape Framebuffer Display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kiosk
+WorkingDirectory=/home/kiosk/pagescrape
+EnvironmentFile=/home/kiosk/pagescrape/.env
+ExecStart=/usr/bin/node /home/kiosk/pagescrape/screenshot.js
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pagescrape
+
+# Security: Run with limited privileges
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,7 @@
 node_modules
 npm-debug.log
 *.png
+!splash.png
 screenshot_*
 test.png
 latest.png

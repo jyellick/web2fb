@@ -14,6 +14,19 @@ if (DISPLAY_URL === 'https://example.com') {
 let fbFd = null;
 let fbInfo = null;
 
+// Clock region state (for local overlay)
+let clockRegion = null;
+let clockStyle = null;
+
+// Base image (without clock)
+let baseImageBuffer = null;
+
+// Buffer pool for reducing GC pressure
+const bufferPool = {
+  rgb565: null,  // Reusable buffer for RGB565 conversion
+  maxSize: 0
+};
+
 // Detect framebuffer properties
 function detectFramebuffer() {
   try {
@@ -61,7 +74,21 @@ function openFramebuffer() {
   }
 }
 
-// Write image to framebuffer
+// Display splash screen from static file
+async function displaySplashScreen() {
+  try {
+    console.log('Displaying splash screen...');
+    const splashBuffer = fs.readFileSync('splash.png');
+    await writeToFramebuffer(splashBuffer);
+    console.log('Splash screen displayed - starting browser...');
+    return true;
+  } catch (err) {
+    console.warn('Could not display splash screen:', err.message);
+    return false;
+  }
+}
+
+// Write image to framebuffer (full screen)
 async function writeToFramebuffer(screenshotBuffer) {
   try {
     // Screenshot is already at framebuffer resolution, just convert format
@@ -70,24 +97,54 @@ async function writeToFramebuffer(screenshotBuffer) {
       limitInputPixels: false
     });
 
+    // Get metadata to verify dimensions
+    const metadata = await sharpImage.metadata();
+    console.log(`Screenshot: ${metadata.width}x${metadata.height}, FB: ${fbInfo.width}x${fbInfo.height}@${fbInfo.bpp}bpp`);
+
     // Convert to raw buffer based on framebuffer format
     let rawBuffer;
     if (fbInfo.bpp === 32) {
-      // RGBA8888
-      rawBuffer = await sharpImage.ensureAlpha().raw().toBuffer();
+      // RGBA8888 - ensure correct size
+      rawBuffer = await sharpImage
+        .ensureAlpha()
+        .raw()
+        .toBuffer();
+
+      // Verify buffer size
+      const expectedSize = fbInfo.width * fbInfo.height * 4;
+      if (rawBuffer.length !== expectedSize) {
+        console.warn(`Buffer size mismatch: got ${rawBuffer.length}, expected ${expectedSize}`);
+      }
     } else if (fbInfo.bpp === 24) {
       // RGB888
-      rawBuffer = await sharpImage.removeAlpha().raw().toBuffer();
+      rawBuffer = await sharpImage
+        .removeAlpha()
+        .raw()
+        .toBuffer();
+
+      const expectedSize = fbInfo.width * fbInfo.height * 3;
+      if (rawBuffer.length !== expectedSize) {
+        console.warn(`Buffer size mismatch: got ${rawBuffer.length}, expected ${expectedSize}`);
+      }
     } else if (fbInfo.bpp === 16) {
-      // RGB565 - need conversion
-      const rgbBuffer = await sharpImage.removeAlpha().raw().toBuffer();
+      // RGB565
+      const rgbBuffer = await sharpImage
+        .removeAlpha()
+        .raw()
+        .toBuffer();
       rawBuffer = convertToRGB565(rgbBuffer);
+
+      const expectedSize = fbInfo.width * fbInfo.height * 2;
+      if (rawBuffer.length !== expectedSize) {
+        console.warn(`Buffer size mismatch: got ${rawBuffer.length}, expected ${expectedSize}`);
+      }
     } else {
       throw new Error(`Unsupported framebuffer format: ${fbInfo.bpp}bpp`);
     }
 
-    // Write to framebuffer
-    fs.writeSync(fbFd, rawBuffer, 0, rawBuffer.length, 0);
+    // Write to framebuffer at offset 0
+    const written = fs.writeSync(fbFd, rawBuffer, 0, rawBuffer.length, 0);
+    console.log(`Wrote ${written} bytes to framebuffer`);
 
     return true;
   } catch (err) {
@@ -96,14 +153,153 @@ async function writeToFramebuffer(screenshotBuffer) {
   }
 }
 
-// Convert RGBA to RGB565
-function convertToRGB565(rgbaBuffer) {
-  const rgb565Buffer = Buffer.alloc((rgbaBuffer.length / 4) * 2);
+// Write partial image to framebuffer at specific region
+async function writePartialToFramebuffer(screenshotBuffer, region) {
+  try {
+    const t1 = Date.now();
+    let sharpImage = sharp(screenshotBuffer, {
+      sequentialRead: true,
+      limitInputPixels: false
+    });
 
-  for (let i = 0; i < rgbaBuffer.length; i += 4) {
-    const r = rgbaBuffer[i];
-    const g = rgbaBuffer[i + 1];
-    const b = rgbaBuffer[i + 2];
+    const metadata = await sharpImage.metadata();
+
+    // Convert to raw buffer based on framebuffer format
+    let rawBuffer;
+    if (fbInfo.bpp === 32) {
+      rawBuffer = await sharpImage.ensureAlpha().raw().toBuffer();
+    } else if (fbInfo.bpp === 24) {
+      rawBuffer = await sharpImage.removeAlpha().raw().toBuffer();
+    } else if (fbInfo.bpp === 16) {
+      const rgbBuffer = await sharpImage.removeAlpha().raw().toBuffer();
+      rawBuffer = convertToRGB565(rgbBuffer);
+    } else {
+      throw new Error(`Unsupported framebuffer format: ${fbInfo.bpp}bpp`);
+    }
+    const sharpTime = Date.now() - t1;
+
+    // Write line by line to correct framebuffer position
+    const t2 = Date.now();
+    const regionWidth = metadata.width;
+    const regionHeight = metadata.height;
+    const bytesPerLine = regionWidth * fbInfo.bytesPerPixel;
+    const fbBytesPerLine = fbInfo.width * fbInfo.bytesPerPixel;
+
+    for (let y = 0; y < regionHeight; y++) {
+      const srcOffset = y * bytesPerLine;
+      const fbOffset = ((region.y + y) * fbBytesPerLine) + (region.x * fbInfo.bytesPerPixel);
+      fs.writeSync(fbFd, rawBuffer, srcOffset, bytesPerLine, fbOffset);
+    }
+    const fbWriteTime = Date.now() - t2;
+
+    console.log(`  -> Partial write breakdown: sharp=${sharpTime}ms, fb=${fbWriteTime}ms`);
+    return true;
+  } catch (err) {
+    console.error('Error writing partial to framebuffer:', err);
+    return false;
+  }
+}
+
+// Generate clock SVG overlay
+function generateClockSVG() {
+  const now = new Date();
+  // Use locale time format (respects system locale settings)
+  const timeString = now.toLocaleTimeString(undefined, {
+    hour: 'numeric',  // 1 digit for single-digit hours
+    minute: '2-digit',
+    second: '2-digit'
+  });
+
+  // Use detected clock style or defaults
+  const fontSize = clockStyle?.fontSize || 120;
+  const fontFamily = clockStyle?.fontFamily || 'Arial, sans-serif';
+  const color = clockStyle?.color || '#ffffff';
+  const fontWeight = clockStyle?.fontWeight || 'bold';
+  const textAlign = clockStyle?.textAlign || 'left';
+  const letterSpacing = clockStyle?.letterSpacing || 'normal';
+
+  const svgWidth = clockRegion?.width || 700;
+  const svgHeight = clockRegion?.height || 200;
+
+  // Determine text anchor based on text-align
+  let textAnchor = 'start'; // left align
+  let xPos = '0';
+  if (textAlign === 'center') {
+    textAnchor = 'middle';
+    xPos = '50%';
+  } else if (textAlign === 'right') {
+    textAnchor = 'end';
+    xPos = '100%';
+  }
+
+  return Buffer.from(`
+    <svg width="${svgWidth}" height="${svgHeight}">
+      <text
+        x="${xPos}"
+        y="50%"
+        font-family="${fontFamily}"
+        font-size="${fontSize}px"
+        font-weight="${fontWeight}"
+        fill="${color}"
+        text-anchor="${textAnchor}"
+        dominant-baseline="middle"
+        letter-spacing="${letterSpacing}">
+        ${timeString}
+      </text>
+    </svg>
+  `);
+}
+
+// Render clock and write only the clock region to framebuffer (optimized)
+async function updateClockOverlay() {
+  try {
+    if (!baseImageBuffer || !clockRegion) {
+      console.warn('Base image or clock region not available');
+      return false;
+    }
+
+    const clockSVG = generateClockSVG();
+
+    // Extract the clock region from the base image and composite the clock on top
+    const clockRegionImage = await sharp(baseImageBuffer)
+      .extract({
+        left: clockRegion.x,
+        top: clockRegion.y,
+        width: clockRegion.width,
+        height: clockRegion.height
+      })
+      .composite([{
+        input: clockSVG
+      }])
+      .png()
+      .toBuffer();
+
+    // Write only the clock region to the framebuffer (not the entire screen!)
+    await writePartialToFramebuffer(clockRegionImage, clockRegion);
+    return true;
+  } catch (err) {
+    console.error('Error updating clock overlay:', err);
+    return false;
+  }
+}
+
+// Convert RGB to RGB565 (with buffer pooling)
+function convertToRGB565(rgbBuffer) {
+  // rgbBuffer is RGB (no alpha), 3 bytes per pixel
+  const requiredSize = (rgbBuffer.length / 3) * 2;
+
+  // Reuse buffer if large enough, otherwise allocate new one
+  if (!bufferPool.rgb565 || bufferPool.maxSize < requiredSize) {
+    bufferPool.rgb565 = Buffer.allocUnsafe(requiredSize);
+    bufferPool.maxSize = requiredSize;
+  }
+
+  const rgb565Buffer = bufferPool.rgb565;
+
+  for (let i = 0; i < rgbBuffer.length; i += 3) {
+    const r = rgbBuffer[i];
+    const g = rgbBuffer[i + 1];
+    const b = rgbBuffer[i + 2];
 
     // Convert 8-bit RGB to 5-6-5
     const r5 = (r >> 3) & 0x1F;
@@ -114,11 +310,12 @@ function convertToRGB565(rgbaBuffer) {
     const rgb565 = (r5 << 11) | (g6 << 5) | b5;
 
     // Write as little-endian
-    const offset = (i / 4) * 2;
+    const offset = (i / 3) * 2;
     rgb565Buffer.writeUInt16LE(rgb565, offset);
   }
 
-  return rgb565Buffer;
+  // Return slice of correct size (buffer may be larger)
+  return rgb565Buffer.slice(0, requiredSize);
 }
 
 (async () => {
@@ -128,7 +325,10 @@ function convertToRGB565(rgbaBuffer) {
     process.exit(1);
   }
 
-  // Launch browser
+  // Display splash screen while browser launches
+  await displaySplashScreen();
+
+  // Launch browser with memory optimizations
   const browser = await puppeteer.launch({
     headless: 'new',
     args: [
@@ -136,7 +336,27 @@ function convertToRGB565(rgbaBuffer) {
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
       '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process'
+      '--disable-features=IsolateOrigins,site-per-process',
+      // Memory optimizations for Pi Zero 2 W
+      '--disable-dev-shm-usage',  // Use /tmp instead of /dev/shm (avoids shared memory limits)
+      '--disable-gpu',  // No GPU on Pi
+      '--disable-software-rasterizer',
+      '--disable-extensions',
+      '--disable-background-networking',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-breakpad',
+      '--disable-component-extensions-with-background-pages',
+      '--disable-features=TranslateUI,BlinkGenPropertyTrees',
+      '--disable-ipc-flooding-protection',
+      '--disable-renderer-backgrounding',
+      '--metrics-recording-only',
+      '--mute-audio',
+      '--no-default-browser-check',
+      '--no-first-run',
+      '--no-pings',
+      '--no-zygote',
+      '--single-process',  // Single process mode (less memory overhead)
     ]
   });
 
@@ -162,8 +382,8 @@ function convertToRGB565(rgbaBuffer) {
 
   console.log('Loading page...');
   await page.goto(DISPLAY_URL, {
-    waitUntil: ['load', 'networkidle2'],
-    timeout: 60000
+    waitUntil: 'load',  // Just wait for load event, not network idle (faster on slow Pi)
+    timeout: 180000     // 3 minutes - Pi Zero 2 W needs extra time
   });
 
   console.log('Scrolling page to trigger lazy loading...');
@@ -183,63 +403,250 @@ function convertToRGB565(rgbaBuffer) {
       .filter(r => r.initiatorType === 'img' || r.initiatorType === 'css')
       .every(r => r.responseEnd > 0);
     return allImagesLoaded && noNetworkActivity;
-  }, { timeout: 30000 });
+  }, { timeout: 120000 });  // 2 minutes for slow Pi
 
   console.log('All images loaded, page ready');
 
-  console.log('Setting up MutationObserver on clock element...');
-
-  // Watchdog timer
-  let lastUpdateTime = Date.now();
-  const WATCHDOG_TIMEOUT = 30000;
-
-  setInterval(() => {
-    const now = Date.now();
-    const timeSinceLastUpdate = now - lastUpdateTime;
-
-    if (timeSinceLastUpdate > WATCHDOG_TIMEOUT) {
-      console.error(`WATCHDOG: No updates for ${timeSinceLastUpdate}ms. Restarting...`);
-      process.exit(1);
-    }
-  }, 10000);
-
-  // Set up MutationObserver
-  await page.exposeFunction('onClockChange', async () => {
-    // Use JPEG for faster capture and processing
-    const screenshot = await page.screenshot({
-      type: 'jpeg',
-      quality: 90  // Good quality, faster than PNG
-    });
-    await writeToFramebuffer(screenshot);
-    lastUpdateTime = Date.now();
-    const timestamp = new Date().toISOString();
-    console.log(`Frame written to framebuffer at ${timestamp}`);
+  // Disable all CSS transitions and animations for instant updates
+  console.log('Disabling CSS transitions and animations...');
+  await page.addStyleTag({
+    content: `
+      *, *::before, *::after {
+        animation-duration: 0s !important;
+        animation-delay: 0s !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+        animation: none !important;
+        transition: none !important;
+      }
+    `
   });
+  console.log('Transitions disabled');
 
-  await page.evaluate(() => {
+  // Wait a bit more for full rendering
+  console.log('Waiting for complete page render...');
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  // Detect clock position and styling before hiding it
+  console.log('Detecting clock element position and style...');
+  const clockInfo = await page.evaluate(() => {
     const timeElement = document.querySelector('.time.large');
-
     if (!timeElement) {
-      console.error('Could not find time element');
-      return;
+      console.error('Clock element not found!');
+      return null;
     }
 
-    console.log('Found time element, setting up observer...');
+    const rect = timeElement.getBoundingClientRect();
+    const styles = window.getComputedStyle(timeElement);
 
-    const observer = new MutationObserver((mutations) => {
-      window.onClockChange();
-    });
+    console.log('Clock element rect:', JSON.stringify({
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height
+    }));
 
-    observer.observe(timeElement, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
+    console.log('Clock styles:', JSON.stringify({
+      fontSize: styles.fontSize,
+      fontFamily: styles.fontFamily,
+      color: styles.color,
+      fontWeight: styles.fontWeight,
+      textAlign: styles.textAlign,
+      letterSpacing: styles.letterSpacing
+    }));
 
-    console.log('MutationObserver active');
+    return {
+      region: {
+        x: Math.floor(rect.left),
+        y: Math.floor(rect.top),
+        width: Math.ceil(rect.width),
+        height: Math.ceil(rect.height)
+      },
+      style: {
+        fontSize: parseInt(styles.fontSize),
+        fontFamily: styles.fontFamily,
+        color: styles.color,
+        fontWeight: styles.fontWeight,
+        textAlign: styles.textAlign,
+        letterSpacing: styles.letterSpacing || 'normal'
+      }
+    };
   });
 
-  console.log('Monitoring clock for changes. Press Ctrl+C to stop.');
+  if (clockInfo) {
+    clockRegion = clockInfo.region;
+    clockStyle = clockInfo.style;
+    console.log(`Clock detected at (${clockRegion.x}, ${clockRegion.y}), size: ${clockRegion.width}x${clockRegion.height}`);
+    console.log(`Clock style: ${clockStyle.fontSize}px ${clockStyle.fontFamily}, color: ${clockStyle.color}`);
+  } else {
+    console.error('Could not detect clock element!');
+    process.exit(1);
+  }
+
+  // Hide the clock element
+  console.log('Hiding clock element from page...');
+  await page.addStyleTag({
+    content: `
+      .time.large {
+        visibility: hidden !important;
+      }
+    `
+  });
+
+  // Wait for page to re-render without clock
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  // Capture base image (without clock)
+  console.log('Capturing base image (without clock)...');
+  baseImageBuffer = await page.screenshot({
+    type: 'jpeg',
+    quality: 90
+  });
+  console.log('Base image captured');
+
+  // Initial display: write full base image first
+  console.log('Writing base image to framebuffer...');
+  await writeToFramebuffer(baseImageBuffer);
+  console.log('Base image displayed');
+
+  // Then overlay the clock on top
+  console.log('Adding clock overlay...');
+  await updateClockOverlay();
+  console.log('Clock overlay displayed');
+
+  // Function to re-capture base image (when background changes)
+  const recaptureBaseImage = async (reason) => {
+    const startTime = Date.now();
+    console.log(`Re-capturing base image (${reason})...`);
+
+    const t1 = Date.now();
+    baseImageBuffer = await page.screenshot({
+      type: 'jpeg',
+      quality: 90
+    });
+    const screenshotTime = Date.now() - t1;
+
+    // Write the full base image first
+    await writeToFramebuffer(baseImageBuffer);
+
+    // Then overlay the clock
+    await updateClockOverlay();
+
+    const totalTime = Date.now() - startTime;
+    console.log(`Base image updated in ${totalTime}ms (screenshot: ${screenshotTime}ms)`);
+  };
+
+  // Expose function for background image changes
+  await page.exposeFunction('onBackgroundChange', async () => {
+    console.log('Background image changed');
+    await recaptureBaseImage('background changed');
+  });
+
+  // Set up enhanced background change detection
+  await page.evaluate(() => {
+    // Track current state for comparison
+    let lastImageSnapshot = '';
+
+    function captureImageSnapshot() {
+      const images = Array.from(document.querySelectorAll('img'));
+      const backgroundElements = Array.from(document.querySelectorAll('[style*="background"]'));
+
+      const imageData = images.map(img => ({
+        src: img.src,
+        currentSrc: img.currentSrc
+      }));
+
+      const bgData = backgroundElements.map(el => ({
+        bg: el.style.background,
+        bgImage: el.style.backgroundImage
+      }));
+
+      return JSON.stringify({ images: imageData, backgrounds: bgData });
+    }
+
+    lastImageSnapshot = captureImageSnapshot();
+    console.log(`Initial image snapshot captured`);
+
+    // Watch for any DOM changes that might affect images
+    const observer = new MutationObserver((mutations) => {
+      let shouldCheck = false;
+
+      for (const mutation of mutations) {
+        // Check for attribute changes on images
+        if (mutation.type === 'attributes') {
+          const attrName = mutation.attributeName;
+          if (attrName === 'src' || attrName === 'style' ||
+              attrName === 'class' || attrName === 'srcset' ||
+              attrName === 'background' || attrName === 'background-image') {
+            shouldCheck = true;
+            console.log(`Detected ${attrName} change on ${mutation.target.tagName}`);
+            break;
+          }
+        }
+
+        // Check for added/removed nodes that might be images
+        if (mutation.type === 'childList') {
+          const hasImageNodes = Array.from(mutation.addedNodes).some(node =>
+            node.tagName === 'IMG' || (node.querySelectorAll && node.querySelectorAll('img').length > 0)
+          );
+          if (hasImageNodes) {
+            shouldCheck = true;
+            console.log('Detected image element changes in DOM');
+            break;
+          }
+        }
+      }
+
+      if (shouldCheck) {
+        const currentSnapshot = captureImageSnapshot();
+        if (currentSnapshot !== lastImageSnapshot) {
+          console.log('Image state changed, triggering update');
+          lastImageSnapshot = currentSnapshot;
+          window.onBackgroundChange();
+        }
+      }
+    });
+
+    // Observe the entire document
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['src', 'style', 'class', 'srcset', 'background', 'background-image'],
+      childList: true,
+      subtree: true
+    });
+
+    console.log('Enhanced background observer active (watching entire document)');
+
+    // Periodic fallback check every 2 minutes
+    setInterval(() => {
+      const currentSnapshot = captureImageSnapshot();
+      if (currentSnapshot !== lastImageSnapshot) {
+        console.log('Periodic check detected image changes');
+        lastImageSnapshot = currentSnapshot;
+        window.onBackgroundChange();
+      }
+    }, 120000); // 2 minutes
+
+    console.log('Periodic fallback check active (every 2 minutes)');
+  });
+
+  // Update clock overlay every second
+  console.log('Starting clock update loop (1 second interval)...');
+  let updateCount = 0;
+  setInterval(async () => {
+    const startTime = Date.now();
+    await updateClockOverlay();
+    const duration = Date.now() - startTime;
+    updateCount++;
+
+    // Log every 10 seconds
+    if (updateCount % 10 === 0) {
+      const timestamp = new Date().toISOString();
+      console.log(`[${timestamp}] Clock overlay update: ${duration}ms`);
+    }
+  }, 1000);
+
+  console.log('Clock overlay system active. Press Ctrl+C to stop.');
 
   // Cleanup on exit
   process.on('SIGINT', () => {
