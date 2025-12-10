@@ -1,0 +1,52 @@
+{
+  "$schema": "../config.schema.json",
+  "name": "DakBoard Display",
+  "description": "Optimized configuration for DakBoard dashboards with local clock overlay",
+
+  "display": {
+    "url": "https://dakboard.com/display/uuid/YOUR-UUID-HERE",
+    "width": 1920,
+    "height": 1080,
+    "framebufferDevice": "/dev/fb0"
+  },
+
+  "browser": {
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "timeout": 180000,
+    "imageLoadTimeout": 120000,
+    "disableAnimations": true
+  },
+
+  "overlays": [
+    {
+      "name": "clock",
+      "type": "clock",
+      "selector": ".time.large",
+      "enabled": true,
+      "updateInterval": 1000,
+      "format": {
+        "hour": "numeric",
+        "minute": "2-digit",
+        "second": "2-digit"
+      },
+      "detectStyle": true,
+      "comment": "Hides the DakBoard clock and renders it locally to avoid full page re-renders"
+    }
+  ],
+
+  "changeDetection": {
+    "enabled": true,
+    "watchSelectors": ["img", "[style*='background']"],
+    "watchAttributes": ["src", "style", "class", "srcset"],
+    "periodicCheckInterval": 120000,
+    "debounceDelay": 500,
+    "comment": "Detects when background images change and triggers re-render"
+  },
+
+  "performance": {
+    "scrollToLoadLazy": true,
+    "waitForImages": true,
+    "bufferPooling": true,
+    "splashScreen": "splash.png"
+  }
+}

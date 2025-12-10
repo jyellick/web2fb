@@ -1,14 +1,14 @@
 [Unit]
-Description=PageScrape Framebuffer Display
+Description=web2fb - Web to Framebuffer Display
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=kiosk
-WorkingDirectory=/home/kiosk/pagescrape
-EnvironmentFile=/home/kiosk/pagescrape/.env
-ExecStart=/usr/bin/node /home/kiosk/pagescrape/screenshot.js
+WorkingDirectory=/home/kiosk/web2fb
+EnvironmentFile=/home/kiosk/web2fb/.env
+ExecStart=/usr/bin/node /home/kiosk/web2fb/web2fb.js
 
 # Restart on failure
 Restart=on-failure
@@ -17,7 +17,7 @@ RestartSec=10
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=pagescrape
+SyslogIdentifier=web2fb
 
 # Security: Run with limited privileges
 NoNewPrivileges=true

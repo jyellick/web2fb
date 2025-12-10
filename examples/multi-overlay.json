@@ -1,0 +1,73 @@
+{
+  "$schema": "../config.schema.json",
+  "name": "Multi-Overlay Display",
+  "description": "Example showing multiple overlay elements (clock, date, custom text)",
+
+  "display": {
+    "url": "https://example.com/dashboard",
+    "width": 1920,
+    "height": 1080,
+    "framebufferDevice": "/dev/fb0"
+  },
+
+  "browser": {
+    "timeout": 180000,
+    "imageLoadTimeout": 120000,
+    "disableAnimations": true
+  },
+
+  "overlays": [
+    {
+      "name": "clock",
+      "type": "clock",
+      "selector": ".clock",
+      "enabled": true,
+      "updateInterval": 1000,
+      "format": {
+        "hour": "2-digit",
+        "minute": "2-digit",
+        "second": "2-digit",
+        "hour12": false
+      },
+      "detectStyle": true
+    },
+    {
+      "name": "date",
+      "type": "date",
+      "selector": ".date",
+      "enabled": true,
+      "updateInterval": 60000,
+      "format": {
+        "weekday": "long",
+        "year": "numeric",
+        "month": "long",
+        "day": "numeric"
+      },
+      "detectStyle": true,
+      "comment": "Updates date every minute"
+    },
+    {
+      "name": "custom-text",
+      "type": "text",
+      "selector": ".status",
+      "enabled": false,
+      "updateInterval": 5000,
+      "text": "System Online",
+      "detectStyle": true,
+      "comment": "Example of custom static text overlay (disabled)"
+    }
+  ],
+
+  "changeDetection": {
+    "enabled": true,
+    "watchSelectors": ["img", "[style*='background']"],
+    "watchAttributes": ["src", "style", "class"],
+    "periodicCheckInterval": 120000
+  },
+
+  "performance": {
+    "scrollToLoadLazy": true,
+    "waitForImages": true,
+    "bufferPooling": true
+  }
+}

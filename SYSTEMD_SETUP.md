@@ -1,6 +1,6 @@
-# Systemd Service Setup for PageScrape
+# Systemd Service Setup for web2fb
 
-This guide will help you set up PageScrape to run automatically on boot using systemd.
+This guide will help you set up web2fb to run automatically on boot using systemd.
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ This guide will help you set up PageScrape to run automatically on boot using sy
 
 1. **Copy the service file to systemd directory**:
    ```bash
-   sudo cp pagescrape.service /etc/systemd/system/
+   sudo cp web2fb.service /etc/systemd/system/
    ```
 
 2. **Reload systemd to recognize the new service**:
@@ -36,52 +36,52 @@ This guide will help you set up PageScrape to run automatically on boot using sy
 
 3. **Enable the service to start on boot**:
    ```bash
-   sudo systemctl enable pagescrape.service
+   sudo systemctl enable web2fb.service
    ```
 
 4. **Start the service now** (without rebooting):
    ```bash
-   sudo systemctl start pagescrape.service
+   sudo systemctl start web2fb.service
    ```
 
 ## Managing the Service
 
 ### Check service status
 ```bash
-sudo systemctl status pagescrape.service
+sudo systemctl status web2fb.service
 ```
 
 ### View logs
 ```bash
 # View recent logs
-sudo journalctl -u pagescrape.service -n 50
+sudo journalctl -u web2fb.service -n 50
 
 # Follow logs in real-time
-sudo journalctl -u pagescrape.service -f
+sudo journalctl -u web2fb.service -f
 
 # View logs since last boot
-sudo journalctl -u pagescrape.service -b
+sudo journalctl -u web2fb.service -b
 ```
 
 ### Stop the service
 ```bash
-sudo systemctl stop pagescrape.service
+sudo systemctl stop web2fb.service
 ```
 
 ### Restart the service
 ```bash
-sudo systemctl restart pagescrape.service
+sudo systemctl restart web2fb.service
 ```
 
 ### Disable auto-start on boot
 ```bash
-sudo systemctl disable pagescrape.service
+sudo systemctl disable web2fb.service
 ```
 
 ## Troubleshooting
 
 ### Service fails to start
-1. Check the logs: `sudo journalctl -u pagescrape.service -n 100`
+1. Check the logs: `sudo journalctl -u web2fb.service -n 100`
 2. Verify `.env` file exists and is readable
 3. Ensure Node.js path is correct: `which node`
 4. Check framebuffer permissions: `ls -l /dev/fb0`
@@ -98,18 +98,18 @@ sudo chmod 666 /dev/fb0
 ### Change user or paths
 Edit the service file:
 ```bash
-sudo nano /etc/systemd/system/pagescrape.service
+sudo nano /etc/systemd/system/web2fb.service
 ```
 Then reload and restart:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart pagescrape.service
+sudo systemctl restart web2fb.service
 ```
 
 ## Notes
 
 - The service runs as user `kiosk` (change in service file if needed)
-- Application should be installed in `/home/kiosk/pagescrape`
+- Application should be installed in `/home/kiosk/web2fb`
 - Logs are sent to systemd journal (use `journalctl` to view)
 - Service restarts automatically on failure (10 second delay)
 - Network must be online before service starts

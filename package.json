@@ -1,4 +1,36 @@
 {
+  "name": "web2fb",
+  "version": "1.0.0",
+  "description": "Optimized web-to-framebuffer renderer for displaying web dashboards on resource-constrained devices like Raspberry Pi Zero 2 W",
+  "main": "web2fb.js",
+  "bin": {
+    "web2fb": "./web2fb.js"
+  },
+  "scripts": {
+    "start": "node web2fb.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "framebuffer",
+    "raspberry-pi",
+    "kiosk",
+    "dashboard",
+    "puppeteer",
+    "headless",
+    "rendering",
+    "dakboard",
+    "display",
+    "low-memory"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "express": "^5.2.1",
     "puppeteer": "^24.32.1",

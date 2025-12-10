@@ -1,0 +1,34 @@
+{
+  "$schema": "../config.schema.json",
+  "name": "Simple Web Display",
+  "description": "Basic configuration for displaying any webpage to framebuffer",
+
+  "display": {
+    "url": "https://example.com",
+    "width": 1920,
+    "height": 1080,
+    "framebufferDevice": "/dev/fb0"
+  },
+
+  "browser": {
+    "timeout": 180000,
+    "imageLoadTimeout": 120000,
+    "disableAnimations": false
+  },
+
+  "overlays": [],
+
+  "changeDetection": {
+    "enabled": true,
+    "watchSelectors": ["img"],
+    "watchAttributes": ["src"],
+    "periodicCheckInterval": 300000,
+    "comment": "Check for image changes every 5 minutes"
+  },
+
+  "performance": {
+    "scrollToLoadLazy": true,
+    "waitForImages": true,
+    "bufferPooling": true
+  }
+}

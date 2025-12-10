@@ -1,305 +1,467 @@
-# PageScrape - Direct Framebuffer Display
+# web2fb - Web to Framebuffer Renderer
 
-Optimized renderer for displaying web dashboards (like DakBoard) directly to a framebuffer on resource-constrained devices like Raspberry Pi Zero 2 W.
+Optimized renderer for displaying web pages directly to a Linux framebuffer on resource-constrained devices like Raspberry Pi Zero 2 W.
+
+Perfect for kiosk displays, dashboards (DakBoard, HABPanel, Grafana), and any web content you want to display on a low-power device.
+
+## Features
+
+- **Direct framebuffer rendering** - No X11/Wayland overhead
+- **Smart overlay system** - Hide dynamic elements (clocks, dates) and render them locally to avoid constant page re-renders
+- **Configurable** - JSON-based configuration for any website
+- **Memory optimized** - Runs on devices with as little as 512MB RAM
+- **Change detection** - Automatically re-renders when page content changes
+- **Multiple overlay types** - Clock, date, custom text, or write your own
+- **Example configs included** - Ready-to-use configurations for DakBoard and other use cases
+
+## Quick Start
+
+```bash
+# Clone repository
+git clone <repo-url> /home/kiosk/web2fb
+cd /home/kiosk/web2fb
+
+# Install dependencies
+npm install
+
+# Create configuration (or use an example)
+cp examples/dakboard.json config.json
+nano config.json  # Edit with your URL
+
+# Run
+node web2fb.js
+```
 
 ## Architecture
 
-**Direct framebuffer rendering on Raspberry Pi:**
-- Runs Puppeteer/Chromium locally to render the dashboard
-- Writes directly to Linux framebuffer device (`/dev/fb0`)
-- Detects and hides the clock element from the page
-- Renders clock overlay locally (updates only clock region, not full screen)
-- Monitors page for background image changes
-- Optimized for low memory and CPU usage
+**How it works:**
+1. Puppeteer/Chromium renders the webpage at your display resolution
+2. Optionally detects and hides dynamic elements (like clocks)
+3. Captures base screenshot and writes to framebuffer
+4. Renders overlay elements locally (clock updates every second without re-scraping the page)
+5. Monitors page for changes and re-renders only when needed
 
-**Key optimizations:**
-- Clock updates write only ~110KB (609x90 region) instead of 4MB (1920x1080 full screen)
-- Base page screenshot only when background images change
-- Buffer pooling to reduce GC pressure
-- Single-process Chromium with memory-optimized flags
-
-## Hardware Requirements
-
-- Raspberry Pi Zero 2 W (or any Pi with framebuffer support)
-- Raspbian Bookworm (or similar Linux with framebuffer)
-- Network connection for initial page load and updates
+**Performance:**
+- Clock overlay updates: ~50ms, writes only ~110KB (vs 4MB+ for full screen)
+- Full page render: Only when background content actually changes
+- Memory: ~200-300MB total (Chromium process)
+- CPU: <5% idle on Pi Zero 2 W
 
 ## Installation
 
-### 1. Install Dependencies
+### 1. System Setup (Raspberry Pi)
 
 ```bash
 # Update system
-sudo apt-get update
-sudo apt-get upgrade
+sudo apt-get update && sudo apt-get upgrade
 
-# Install Node.js (if not already installed)
+# Install Node.js 20+
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
-# Install Chromium for ARM64
+# Install Chromium
 sudo apt-get install -y chromium-browser
 
-# Install required libraries for Puppeteer
+# Install Puppeteer dependencies
 sudo apt-get install -y \
-  libx11-xcb1 \
-  libxcomposite1 \
-  libxcursor1 \
-  libxdamage1 \
-  libxi6 \
-  libxtst6 \
-  libnss3 \
-  libcups2 \
-  libxss1 \
-  libxrandr2 \
-  libasound2 \
-  libpangocairo-1.0-0 \
-  libatk1.0-0 \
-  libatk-bridge2.0-0 \
-  libgtk-3-0
-
-# Clone repository
-git clone <your-repo-url> /home/kiosk/pagescrape
-cd /home/kiosk/pagescrape
-
-# Install Node dependencies
-npm install
+  libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
+  libxi6 libxtst6 libnss3 libcups2 libxss1 libxrandr2 \
+  libasound2 libpangocairo-1.0-0 libatk1.0-0 \
+  libatk-bridge2.0-0 libgtk-3-0
 ```
 
-### 2. Configure Environment
+### 2. Optimize Pi for Framebuffer (Recommended)
+
+For best performance and to prevent conflicts:
 
 ```bash
-# Copy example environment file
-cp .env.example .env
-
-# Edit configuration
-nano .env
-```
-
-Required environment variables:
-- `DISPLAY_URL`: Your dashboard URL (e.g., DakBoard display URL) - **required**
-- `WIDTH`: Screen width in pixels (default: 1920)
-- `HEIGHT`: Screen height in pixels (default: 1080)
-- `FRAMEBUFFER_DEVICE`: Framebuffer device path (default: `/dev/fb0`)
-- `PUPPETEER_EXECUTABLE_PATH`: Path to Chromium (required on ARM64: `/usr/bin/chromium`)
-
-**Important for ARM64:** Puppeteer doesn't provide Chrome binaries for ARM64, so you must set:
-```bash
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-```
-
-### 3. Raspberry Pi Configuration
-
-For optimal performance and to prevent framebuffer conflicts:
-
-**a) Switch to console-only mode** (saves resources, prevents GUI from competing for framebuffer):
-```bash
+# Switch to console-only mode (no GUI)
 sudo raspi-config
 # Navigate to: System Options → Boot / Auto Login → Console Autologin
-```
 
-**b) Disable getty on tty1** (prevents login prompt from interfering with framebuffer):
-```bash
+# Disable getty to prevent login prompt on framebuffer
 sudo systemctl disable getty@tty1.service
-```
 
-**c) Add user to video group** (for framebuffer access):
-```bash
+# Add user to video group for framebuffer access
 sudo usermod -a -G video kiosk
+
+# Reboot for changes to take effect
+sudo reboot
 ```
 
-Log out and back in for group changes to take effect.
+### 3. Install web2fb
 
-### 4. Set Up Auto-Start on Boot
-
-See [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md) for detailed systemd service setup instructions.
-
-Quick setup:
 ```bash
-# Copy service file
-sudo cp pagescrape.service /etc/systemd/system/
+# Create kiosk user (if needed)
+sudo useradd -m -s /bin/bash kiosk
+sudo usermod -a -G video kiosk
 
-# Enable and start service
-sudo systemctl daemon-reload
-sudo systemctl enable pagescrape.service
-sudo systemctl start pagescrape.service
+# Switch to kiosk user
+sudo su - kiosk
 
-# Check status
-sudo systemctl status pagescrape.service
+# Clone repository
+git clone <repo-url> /home/kiosk/web2fb
+cd /home/kiosk/web2fb
+
+# Install dependencies
+npm install
+
+# Create .env file (for environment overrides)
+cp .env.example .env
+nano .env
 ```
 
 ## Configuration
 
-All configuration is done via environment variables in `.env`:
+web2fb uses JSON configuration files. Create `config.json` or use `--config=path/to/config.json`.
 
-```bash
-# Required: Your dashboard display URL
-DISPLAY_URL=https://dakboard.com/display/uuid/YOUR-UUID-HERE
+### Basic Configuration
 
-# Required for ARM64: Path to Chromium executable
-PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
-# Optional: Screen resolution (defaults to 1920x1080)
-WIDTH=1920
-HEIGHT=1080
-
-# Optional: Framebuffer device (default: /dev/fb0)
-FRAMEBUFFER_DEVICE=/dev/fb0
+```json
+{
+  "display": {
+    "url": "https://example.com",
+    "width": 1920,
+    "height": 1080,
+    "framebufferDevice": "/dev/fb0"
+  }
+}
 ```
 
-## Usage
+### DakBoard Configuration
 
-### Run Manually
-
-```bash
-cd /home/kiosk/pagescrape
-node screenshot.js
+```json
+{
+  "display": {
+    "url": "https://dakboard.com/display/uuid/YOUR-UUID",
+    "width": 1920,
+    "height": 1080
+  },
+  "overlays": [
+    {
+      "name": "clock",
+      "type": "clock",
+      "selector": ".time.large",
+      "enabled": true,
+      "updateInterval": 1000,
+      "format": {
+        "hour": "numeric",
+        "minute": "2-digit",
+        "second": "2-digit"
+      },
+      "detectStyle": true
+    }
+  ]
+}
 ```
 
-### Run as Service
+See `examples/` directory for more configurations.
 
+### Environment Variables
+
+You can override config values with environment variables:
+
+- `DISPLAY_URL` - Override display.url
+- `WIDTH` / `HEIGHT` - Override resolution
+- `FRAMEBUFFER_DEVICE` - Override framebuffer device
+- `PUPPETEER_EXECUTABLE_PATH` - Path to Chromium (required on ARM64: `/usr/bin/chromium`)
+
+Create `.env` file:
 ```bash
-# Start
-sudo systemctl start pagescrape.service
-
-# Stop
-sudo systemctl stop pagescrape.service
-
-# Restart
-sudo systemctl restart pagescrape.service
-
-# View logs
-sudo journalctl -u pagescrape.service -f
+DISPLAY_URL=https://your-dashboard.com
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium  # Required on ARM64
 ```
 
-## Development & Testing
+## Configuration Reference
+
+### Display Settings
+
+```json
+{
+  "display": {
+    "url": "https://example.com",         // Required: URL to render
+    "width": 1920,                         // Display width (default: 1920)
+    "height": 1080,                        // Display height (default: 1080)
+    "framebufferDevice": "/dev/fb0"        // Framebuffer device (default: /dev/fb0)
+  }
+}
+```
+
+### Browser Settings
+
+```json
+{
+  "browser": {
+    "userAgent": "...",                    // Custom user agent
+    "timeout": 180000,                     // Page load timeout (ms, default: 180000)
+    "imageLoadTimeout": 120000,            // Image load timeout (ms, default: 120000)
+    "disableAnimations": true              // Disable CSS animations (default: true)
+  }
+}
+```
+
+### Overlay System
+
+Overlays let you hide page elements and render them locally for better performance.
+
+**Clock Overlay:**
+```json
+{
+  "name": "clock",
+  "type": "clock",
+  "selector": ".time",                     // CSS selector
+  "enabled": true,
+  "updateInterval": 1000,                  // Update every 1 second
+  "format": {
+    "hour": "numeric",                     // "numeric" or "2-digit"
+    "minute": "2-digit",
+    "second": "2-digit",
+    "hour12": false                        // 24-hour format
+  },
+  "detectStyle": true                      // Auto-detect font/color from page
+}
+```
+
+**Date Overlay:**
+```json
+{
+  "name": "date",
+  "type": "date",
+  "selector": ".date",
+  "updateInterval": 60000,                 // Update every minute
+  "format": {
+    "weekday": "long",
+    "year": "numeric",
+    "month": "long",
+    "day": "numeric"
+  }
+}
+```
+
+**Custom Text Overlay:**
+```json
+{
+  "name": "status",
+  "type": "text",
+  "selector": ".status",
+  "text": "System Online",
+  "updateInterval": 5000
+}
+```
+
+### Change Detection
+
+Automatically detects when page content changes:
+
+```json
+{
+  "changeDetection": {
+    "enabled": true,                       // Enable change detection
+    "watchSelectors": ["img", "[style*='background']"],
+    "watchAttributes": ["src", "style", "class"],
+    "periodicCheckInterval": 120000,       // Fallback check every 2 minutes
+    "debounceDelay": 500                   // Delay before re-render (ms)
+  }
+}
+```
+
+### Performance Options
+
+```json
+{
+  "performance": {
+    "scrollToLoadLazy": true,              // Scroll page to trigger lazy images
+    "waitForImages": true,                 // Wait for all images before render
+    "bufferPooling": true,                 // Reduce GC pressure
+    "splashScreen": "splash.png"           // Show image during startup
+  }
+}
+```
+
+## Running
+
+### Manual
+
+```bash
+# Using default config locations (config.json, web2fb.config.json, .web2fb.json)
+node web2fb.js
+
+# Using specific config
+node web2fb.js --config=examples/dakboard.json
+
+# With environment override
+DISPLAY_URL=https://example.com node web2fb.js
+```
+
+### Auto-start on Boot
+
+See [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md) for detailed systemd service setup.
+
+Quick setup:
+```bash
+sudo cp web2fb.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable web2fb.service
+sudo systemctl start web2fb.service
+```
+
+View logs:
+```bash
+sudo journalctl -u web2fb.service -f
+```
+
+## Use Cases
+
+### DakBoard Dashboard
+```bash
+cp examples/dakboard.json config.json
+# Edit config.json with your DakBoard URL
+node web2fb.js
+```
+
+### Grafana Dashboard
+```json
+{
+  "display": {
+    "url": "https://grafana.example.com/d/dashboard-id?kiosk",
+    "width": 1920,
+    "height": 1080
+  },
+  "changeDetection": {
+    "enabled": true,
+    "periodicCheckInterval": 30000  // Refresh every 30 seconds
+  }
+}
+```
+
+### Simple Webpage
+```bash
+cp examples/simple.json config.json
+node web2fb.js
+```
+
+### Home Assistant / HABPanel
+```json
+{
+  "display": {
+    "url": "https://homeassistant.local:8123/dashboard",
+    "width": 1920,
+    "height": 1080
+  }
+}
+```
+
+## Development
 
 ### Local Testing (without Pi hardware)
 
-Use the included test scripts to simulate framebuffer on your development machine:
+Use test scripts to simulate framebuffer:
 
 ```bash
-# Create simulated framebuffer and run
+# Create simulated framebuffer
 ./test-framebuffer.sh
 
-# In another terminal, view the framebuffer as PNG
+# View framebuffer as PNG (in another terminal)
 ./view-framebuffer.sh
 ```
 
-## Monitoring
+### Creating Custom Overlays
 
-### View Logs
+Edit `lib/overlays.js` to add custom overlay types:
 
-```bash
-# Follow logs in real-time
-sudo journalctl -u pagescrape.service -f
-
-# View recent logs
-sudo journalctl -u pagescrape.service -n 100
-
-# View logs since last boot
-sudo journalctl -u pagescrape.service -b
+```javascript
+function generateCustomOverlay(overlay, region) {
+  // Your custom rendering logic
+  const content = "Your dynamic content";
+  return generateTextSVG(content, overlay, region);
+}
 ```
-
-### What to Look For
-
-**Healthy operation:**
-- `Clock overlay update: XXXms` logged every 10 seconds (should be <100ms)
-- `Partial write breakdown: sharp=XXms, fb=XXms` shows clock region updates
-- No timeout errors
-
-**Background updates:**
-- `Background image changed` when page images rotate
-- `Re-capturing base image...` triggers full page re-render
 
 ## Troubleshooting
 
 ### Page Load Timeout
 
-If you see `TimeoutError: Navigation timeout exceeded`:
-- Increase timeout in screenshot.js (currently 180s for page load, 120s for images)
-- Check network connectivity
-- Verify DISPLAY_URL is accessible
+```bash
+# Increase timeout in config
+{
+  "browser": {
+    "timeout": 300000  // 5 minutes
+  }
+}
+```
 
 ### Framebuffer Permission Denied
 
 ```bash
 # Ensure user is in video group
 sudo usermod -a -G video kiosk
+# Log out and back in
 
 # Check framebuffer permissions
 ls -l /dev/fb0
-
-# Temporarily make writable (for testing only)
-sudo chmod 666 /dev/fb0
 ```
 
-### Clock Not Detected
+### ARM64 Chromium Issues
 
-The application looks for `.time.large` CSS selector. If your page uses different selectors:
-1. Inspect the page HTML to find the correct selector
-2. Modify screenshot.js line ~425 to use correct selector
-
-### High CPU/Memory Usage
-
-- Ensure console-only mode is enabled (no GUI running)
-- Verify getty is disabled on tty1
-- Check browser flags in screenshot.js (already optimized for Pi Zero 2 W)
-- Consider reducing screen resolution in .env
-
-### Chromium Crashes on ARM64
-
-Make sure you have set:
+Make sure `.env` contains:
 ```bash
 PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ```
 
-And installed Chromium:
-```bash
-sudo apt-get install chromium-browser
+### Overlay Not Detected
+
+Check the CSS selector in browser dev tools:
+1. Open the page in a desktop browser
+2. Inspect the element you want to overlay
+3. Find a unique CSS selector
+4. Update config with correct selector
+
+### High Memory Usage
+
+- Ensure console-only mode (no GUI)
+- Disable getty on tty1
+- Reduce display resolution
+- Disable overlays if not needed
+
+## Performance Tips
+
+1. **Overlays** - Use overlays for frequently updating elements (saves ~99% of I/O)
+2. **Change detection** - Tune `periodicCheckInterval` based on how often your content changes
+3. **Console mode** - Disable GUI to free up ~200MB RAM
+4. **Resolution** - Lower resolution = less memory and faster rendering
+5. **Disable animations** - Set `disableAnimations: true` for instant rendering
+
+## Examples
+
+The `examples/` directory contains ready-to-use configurations:
+
+- `dakboard.json` - DakBoard dashboard with clock overlay
+- `simple.json` - Basic webpage rendering
+- `multi-overlay.json` - Multiple overlays (clock, date, text)
+
+## Configuration Schema
+
+See `config.schema.json` for the complete configuration schema. Most IDEs will provide autocomplete if you add:
+
+```json
+{
+  "$schema": "./config.schema.json",
+  ...
+}
 ```
 
-## Performance
+## Contributing
 
-**Raspberry Pi Zero 2 W (typical):**
-- Initial page load: 60-120 seconds (depending on network)
-- Clock overlay update: 30-60ms (only 609x90 region updated)
-- Full page re-render: 2-5 seconds (only when background images change)
-- Memory usage: ~200-300MB (Chromium process)
-- CPU usage: <5% idle, ~50% during updates
-
-**Optimizations applied:**
-- Direct framebuffer writing (no X11/Wayland overhead)
-- Partial framebuffer updates for clock (110KB vs 4MB)
-- Single-process Chromium mode
-- Buffer pooling for RGB565 conversion
-- Local clock rendering (no page re-scraping)
-
-## Architecture Details
-
-### Clock Overlay System
-
-1. Page loads and renders completely
-2. Clock element (`.time.large`) is detected and its position/styling captured
-3. Clock element is hidden from the page via CSS
-4. Base image (without clock) is captured as JPEG
-5. Every second:
-   - Generate clock SVG with current time (using locale formatting)
-   - Extract clock region from base image
-   - Composite clock SVG onto region
-   - Write only clock region to framebuffer (~110KB)
-6. When background images change:
-   - Re-capture base image
-   - Write full framebuffer
-   - Continue clock overlay updates
-
-### Background Change Detection
-
-- MutationObserver watches entire document for image changes
-- Monitors: `src`, `style`, `class`, `srcset`, DOM node changes
-- Periodic fallback check every 2 minutes
-- Triggers full page re-render only when needed
+Contributions welcome! Please:
+1. Test on actual Pi hardware when possible
+2. Keep memory usage low
+3. Document configuration options
+4. Add example configs for new use cases
 
 ## License
 
 MIT
+
+## Credits
+
+Built for displaying DakBoard dashboards on Raspberry Pi Zero 2 W, but designed to be useful for any web-to-framebuffer rendering needs.

@@ -1,0 +1,197 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "web2fb Configuration",
+  "description": "Configuration schema for web2fb - Web to Framebuffer Renderer",
+  "type": "object",
+  "required": ["display"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable name for this configuration"
+    },
+    "description": {
+      "type": "string",
+      "description": "Description of what this configuration does"
+    },
+    "display": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL of the webpage to render",
+          "format": "uri"
+        },
+        "width": {
+          "type": "integer",
+          "description": "Display width in pixels",
+          "default": 1920,
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "description": "Display height in pixels",
+          "default": 1080,
+          "minimum": 1
+        },
+        "framebufferDevice": {
+          "type": "string",
+          "description": "Path to framebuffer device",
+          "default": "/dev/fb0"
+        }
+      }
+    },
+    "browser": {
+      "type": "object",
+      "properties": {
+        "userAgent": {
+          "type": "string",
+          "description": "Custom user agent string"
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Page navigation timeout in milliseconds",
+          "default": 180000,
+          "minimum": 1000
+        },
+        "imageLoadTimeout": {
+          "type": "integer",
+          "description": "Image loading timeout in milliseconds",
+          "default": 120000,
+          "minimum": 1000
+        },
+        "disableAnimations": {
+          "type": "boolean",
+          "description": "Disable CSS animations and transitions",
+          "default": true
+        }
+      }
+    },
+    "overlays": {
+      "type": "array",
+      "description": "Elements to hide and re-render locally for performance",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "selector"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique identifier for this overlay"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["clock", "date", "text", "custom"],
+            "description": "Type of overlay renderer to use"
+          },
+          "selector": {
+            "type": "string",
+            "description": "CSS selector to find the element to replace"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether this overlay is active",
+            "default": true
+          },
+          "updateInterval": {
+            "type": "integer",
+            "description": "How often to update this overlay in milliseconds",
+            "default": 1000,
+            "minimum": 100
+          },
+          "format": {
+            "type": "object",
+            "description": "Formatting options (varies by overlay type)"
+          },
+          "detectStyle": {
+            "type": "boolean",
+            "description": "Auto-detect styling from original element",
+            "default": true
+          },
+          "style": {
+            "type": "object",
+            "description": "Manual style overrides",
+            "properties": {
+              "fontSize": {"type": "integer"},
+              "fontFamily": {"type": "string"},
+              "color": {"type": "string"},
+              "fontWeight": {"type": "string"},
+              "textAlign": {"type": "string"},
+              "letterSpacing": {"type": "string"}
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "Static text content (for type: 'text')"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Optional comment explaining this overlay"
+          }
+        }
+      }
+    },
+    "changeDetection": {
+      "type": "object",
+      "description": "Configuration for detecting page changes",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable automatic change detection",
+          "default": true
+        },
+        "watchSelectors": {
+          "type": "array",
+          "description": "CSS selectors to watch for changes",
+          "items": {"type": "string"},
+          "default": ["img", "[style*='background']"]
+        },
+        "watchAttributes": {
+          "type": "array",
+          "description": "HTML attributes to watch for changes",
+          "items": {"type": "string"},
+          "default": ["src", "style", "class", "srcset"]
+        },
+        "periodicCheckInterval": {
+          "type": "integer",
+          "description": "Fallback periodic check interval in milliseconds",
+          "default": 120000,
+          "minimum": 1000
+        },
+        "debounceDelay": {
+          "type": "integer",
+          "description": "Delay before triggering re-render after change detected",
+          "default": 500,
+          "minimum": 0
+        },
+        "comment": {
+          "type": "string"
+        }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "description": "Performance optimization settings",
+      "properties": {
+        "scrollToLoadLazy": {
+          "type": "boolean",
+          "description": "Scroll page to trigger lazy-loaded images",
+          "default": true
+        },
+        "waitForImages": {
+          "type": "boolean",
+          "description": "Wait for all images to load before rendering",
+          "default": true
+        },
+        "bufferPooling": {
+          "type": "boolean",
+          "description": "Enable buffer pooling to reduce GC pressure",
+          "default": true
+        },
+        "splashScreen": {
+          "type": "string",
+          "description": "Path to splash screen image to show during startup"
+        }
+      }
+    }
+  }
+}
