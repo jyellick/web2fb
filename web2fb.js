@@ -25,21 +25,27 @@ console.log(`web2fb - Web to Framebuffer Renderer`);
 if (config.name) console.log(`Configuration: ${config.name}`);
 console.log('='.repeat(60));
 
-// Framebuffer state
+// Framebuffer state (persistent across browser restarts)
 let fbFd = null;
 let fbInfo = null;
 
-// Overlay state
+// Overlay state (persistent)
 const overlayStates = new Map(); // name -> {region, style, baseRegionBuffer}
 
-// Base image (without overlays)
+// Base image (persistent)
 let baseImageBuffer = null;
 
-// Buffer pool for reducing GC pressure
+// Buffer pool for reducing GC pressure (persistent)
 const bufferPool = {
   rgb565: null,
   maxSize: 0
 };
+
+// Browser state (recreated on restart)
+let browser = null;
+let page = null;
+let intervals = [];
+let userDataDir = null;
 
 // Detect framebuffer properties
 function detectFramebuffer() {
@@ -256,17 +262,62 @@ async function updateAllOverlays() {
   }
 }
 
-// Main application
-(async () => {
-  // Open framebuffer
-  if (!openFramebuffer()) {
-    console.error('Failed to initialize framebuffer');
+// Restart browser in-process
+async function restartBrowser(reason) {
+  console.log('\n' + '='.repeat(60));
+  console.log(`🔄 Restarting browser in-process (${reason})`);
+  console.log('='.repeat(60));
+
+  // Enter recovery mode
+  stressMonitor.enterRecoveryMode();
+
+  try {
+    // Clear all intervals
+    console.log(`Clearing ${intervals.length} interval(s)...`);
+    intervals.forEach(id => clearInterval(id));
+    intervals = [];
+
+    // Close browser
+    if (browser) {
+      console.log('Closing browser...');
+      await browser.close().catch(err => console.warn('Browser close warning:', err.message));
+      browser = null;
+      page = null;
+    }
+
+    // Clean up Chrome profile
+    if (userDataDir) {
+      console.log('Cleaning up Chrome profile...');
+      try {
+        const stats = fs.statSync(userDataDir);
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+        console.log(`✓ Cleaned up Chrome profile`);
+      } catch (err) {
+        console.warn('Warning: Could not remove Chrome profile:', err.message);
+      }
+    }
+
+    // Wait for cooldown
+    const cooldown = stressMonitor.config.recovery.cooldownPeriod;
+    console.log(`Waiting ${cooldown}ms for system recovery...`);
+    await new Promise(resolve => setTimeout(resolve, cooldown));
+
+    // Exit recovery mode
+    stressMonitor.exitRecoveryMode();
+
+    console.log('✓ Recovery complete, re-launching browser...\n');
+
+    // Re-initialize browser and page
+    await initializeBrowserAndRun();
+
+  } catch (err) {
+    console.error('Fatal error during browser restart:', err);
     process.exit(1);
   }
+}
 
-  // Display splash screen
-  await displaySplashScreen();
-
+// Initialize browser and start main loop
+async function initializeBrowserAndRun() {
   // Cleanup old Chrome temporary directories
   console.log('Cleaning up old Chrome profiles...');
   const cleanupStats = cleanupChromeTempDirs({
@@ -316,7 +367,7 @@ async function updateAllOverlays() {
   ];
 
   // Set user data directory in /tmp/web2fb
-  const userDataDir = path.join('/tmp', 'web2fb-chrome-profile');
+  userDataDir = path.join('/tmp', 'web2fb-chrome-profile');
 
   const launchOptions = {
     headless: 'new',
@@ -329,8 +380,8 @@ async function updateAllOverlays() {
   }
 
   console.log('Launching browser...');
-  const browser = await puppeteer.launch(launchOptions);
-  const page = await browser.newPage();
+  browser = await puppeteer.launch(launchOptions);
+  page = await browser.newPage();
 
   // Set user agent if configured
   if (config.browser.userAgent) {
@@ -401,6 +452,9 @@ async function updateAllOverlays() {
   const enabledOverlays = getEnabledOverlays(config);
   if (enabledOverlays.length > 0) {
     console.log(`Detecting ${enabledOverlays.length} overlay(s)...`);
+
+    // Clear existing overlay states on restart
+    overlayStates.clear();
 
     for (const overlay of enabledOverlays) {
       const detected = await detectOverlayRegion(page, overlay);
@@ -584,9 +638,6 @@ async function updateAllOverlays() {
     }, config.changeDetection);
   }
 
-  // Track intervals for cleanup
-  const intervals = [];
-
   // Track in-progress updates per overlay (drop-frame behavior)
   const overlayUpdateInProgress = new Map();
 
@@ -639,88 +690,31 @@ async function updateAllOverlays() {
 
       recoveryCheckInProgress = true;
       try {
-      // Check profile size
-      const profileCheck = checkProfileSize(userDataDir, profileSizeThreshold);
+        // Check profile size
+        const profileCheck = checkProfileSize(userDataDir, profileSizeThreshold);
 
-      if (profileCheck.exceeds) {
-        console.error('\n' + '!'.repeat(60));
-        console.error('🚨 CRITICAL: Chrome profile too large - browser restart required');
-        console.error(`Profile size: ${profileCheck.sizeFormatted} (threshold: ${profileCheck.thresholdFormatted})`);
-        console.error('Large profile in tmpfs consumes RAM on Pi!');
-        console.error('!'.repeat(60));
+        if (profileCheck.exceeds) {
+          console.error('\n' + '!'.repeat(60));
+          console.error('🚨 CRITICAL: Chrome profile too large');
+          console.error(`Profile size: ${profileCheck.sizeFormatted} (threshold: ${profileCheck.thresholdFormatted})`);
+          console.error('Large profile in tmpfs consumes RAM on Pi!');
+          console.error('!'.repeat(60));
 
-        // Enter recovery mode (blocks all operations)
-        stressMonitor.enterRecoveryMode();
-
-        try {
-          // Kill the browser
-          console.log('Killing browser process...');
-          await browser.close().catch(err => console.warn('Browser close warning:', err.message));
-
-          // Clean up user data directory
-          console.log('Cleaning up Chrome profile...');
-          try {
-            fs.rmSync(userDataDir, { recursive: true, force: true });
-            console.log(`✓ Freed ${profileCheck.sizeFormatted} of RAM`);
-          } catch (err) {
-            console.warn('Warning: Could not remove Chrome profile:', err.message);
-          }
-
-          // Wait for cooldown
-          const cooldown = stressMonitor.config.recovery.cooldownPeriod;
-          console.log(`Waiting ${cooldown}ms for system recovery...`);
-          await new Promise(resolve => setTimeout(resolve, cooldown));
-
-          console.log('System should have recovered. Exiting for restart...');
-          console.log('Configure systemd Restart=always or use PM2 for automatic restart.');
-          console.log('!'.repeat(60) + '\n');
-
-          // Exit cleanly - process manager should restart
-          process.exit(43); // Exit code 43 = profile too large
-        } catch (err) {
-          console.error('Error during recovery:', err);
-          process.exit(1);
+          // Restart browser in-process
+          await restartBrowser('profile too large');
+          return;
         }
-      }
 
-      // Check stress level
-      if (stressMonitor.needsBrowserRestart()) {
-        console.error('\n' + '!'.repeat(60));
-        console.error('🚨 CRITICAL: System under severe stress - browser restart required');
-        console.error('!'.repeat(60));
+        // Check stress level
+        if (stressMonitor.needsBrowserRestart()) {
+          console.error('\n' + '!'.repeat(60));
+          console.error('🚨 CRITICAL: System under severe stress');
+          console.error('!'.repeat(60));
 
-        // Enter recovery mode (blocks all operations)
-        stressMonitor.enterRecoveryMode();
-
-        try {
-          // Kill the browser
-          console.log('Killing browser process...');
-          await browser.close().catch(err => console.warn('Browser close warning:', err.message));
-
-          // Clean up user data directory
-          console.log('Cleaning up Chrome profile...');
-          try {
-            fs.rmSync(userDataDir, { recursive: true, force: true });
-          } catch (err) {
-            console.warn('Warning: Could not remove Chrome profile:', err.message);
-          }
-
-          // Wait for cooldown
-          const cooldown = stressMonitor.config.recovery.cooldownPeriod;
-          console.log(`Waiting ${cooldown}ms for system recovery...`);
-          await new Promise(resolve => setTimeout(resolve, cooldown));
-
-          console.log('System should have recovered. Exiting for restart...');
-          console.log('Configure systemd Restart=always or use PM2 for automatic restart.');
-          console.log('!'.repeat(60) + '\n');
-
-          // Exit cleanly - process manager should restart
-          process.exit(42); // Exit code 42 = restart needed
-        } catch (err) {
-          console.error('Error during recovery:', err);
-          process.exit(1);
+          // Restart browser in-process
+          await restartBrowser('severe stress');
+          return;
         }
-      }
       } finally {
         recoveryCheckInProgress = false;
       }
@@ -736,8 +730,24 @@ async function updateAllOverlays() {
     console.log(`  - Overlay update critical threshold: ${stressMonitor.config.thresholds.overlayUpdateCritical}ms`);
     console.log(`  - Base image critical threshold: ${stressMonitor.config.thresholds.baseImageCritical}ms`);
     console.log(`  - Browser restart after ${stressMonitor.config.recovery.killBrowserThreshold} critical events`);
+    console.log(`  - Critical events decay on successful operations`);
   }
   console.log('='.repeat(60));
+}
+
+// Main entry point
+(async () => {
+  // Open framebuffer (only once, persists across browser restarts)
+  if (!openFramebuffer()) {
+    console.error('Failed to initialize framebuffer');
+    process.exit(1);
+  }
+
+  // Display splash screen (only on first startup)
+  await displaySplashScreen();
+
+  // Initialize browser and start main loop
+  await initializeBrowserAndRun();
 
   // Cleanup on exit
   process.on('SIGINT', () => {
@@ -750,14 +760,19 @@ async function updateAllOverlays() {
     if (fbFd) {
       fs.closeSync(fbFd);
     }
-    browser.close();
+
+    if (browser) {
+      browser.close();
+    }
 
     // Clean up Chrome profile
-    try {
-      fs.rmSync(userDataDir, { recursive: true, force: true });
-      console.log('✓ Cleaned up Chrome profile');
-    } catch (err) {
-      // Ignore cleanup errors on exit
+    if (userDataDir) {
+      try {
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+        console.log('✓ Cleaned up Chrome profile');
+      } catch (err) {
+        // Ignore cleanup errors on exit
+      }
     }
 
     process.exit(0);
