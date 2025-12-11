@@ -55,8 +55,8 @@
     "thresholds": {
       "overlayUpdateWarning": 3000,
       "overlayUpdateCritical": 10000,
-      "baseImageWarning": 5000,
-      "baseImageCritical": 15000
+      "baseImageWarning": 15000,
+      "baseImageCritical": 25000
     },
     "recovery": {
       "skipUpdatesOnStress": true,

@@ -198,7 +198,9 @@ function convertToRGB565(rgbBuffer) {
     rgb565Buffer.writeUInt16LE(rgb565, offset);
   }
 
-  return rgb565Buffer.slice(0, requiredSize);
+  // Return buffer directly if it's exactly the right size, otherwise return subarray view
+  // Note: Using subarray (not slice) to avoid creating a new buffer - reuses pooled buffer
+  return requiredSize === bufferPool.maxSize ? rgb565Buffer : rgb565Buffer.subarray(0, requiredSize);
 }
 
 // Update a single overlay
@@ -578,6 +580,9 @@ async function updateAllOverlays() {
     }, config.changeDetection);
   }
 
+  // Track intervals for cleanup
+  const intervals = [];
+
   // Start overlay update loops
   if (overlayStates.size > 0) {
     for (const overlay of enabledOverlays) {
@@ -587,9 +592,11 @@ async function updateAllOverlays() {
 
       console.log(`Starting overlay '${overlay.name}' update loop (${updateInterval}ms)`);
 
-      setInterval(async () => {
+      const intervalId = setInterval(async () => {
         await updateOverlay(overlay);
       }, updateInterval);
+
+      intervals.push(intervalId);
     }
   }
 
@@ -600,7 +607,7 @@ async function updateAllOverlays() {
     console.log(`Stress monitoring enabled (recovery check: ${recoveryCheckInterval}ms)`);
     console.log(`Profile size monitoring: ${formatBytes(profileSizeThreshold)} threshold`);
 
-    setInterval(async () => {
+    const recoveryIntervalId = setInterval(async () => {
       // Check profile size
       const profileCheck = checkProfileSize(userDataDir, profileSizeThreshold);
 
@@ -684,6 +691,8 @@ async function updateAllOverlays() {
         }
       }
     }, recoveryCheckInterval);
+
+    intervals.push(recoveryIntervalId);
   }
 
   console.log('='.repeat(60));
@@ -699,6 +708,11 @@ async function updateAllOverlays() {
   // Cleanup on exit
   process.on('SIGINT', () => {
     console.log('\nShutting down...');
+
+    // Clear all intervals
+    console.log(`Clearing ${intervals.length} interval(s)...`);
+    intervals.forEach(id => clearInterval(id));
+
     if (fbFd) {
       fs.closeSync(fbFd);
     }
