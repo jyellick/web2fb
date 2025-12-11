@@ -192,6 +192,86 @@
           "description": "Path to splash screen image to show during startup"
         }
       }
+    },
+    "stressManagement": {
+      "type": "object",
+      "description": "System stress detection and recovery management for resource-constrained hardware",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable stress monitoring and throttling",
+          "default": true
+        },
+        "thresholds": {
+          "type": "object",
+          "description": "Performance thresholds that trigger stress detection",
+          "properties": {
+            "overlayUpdateWarning": {
+              "type": "integer",
+              "description": "Milliseconds - warn if overlay update exceeds this duration",
+              "default": 3000,
+              "minimum": 100
+            },
+            "overlayUpdateCritical": {
+              "type": "integer",
+              "description": "Milliseconds - critical if overlay update exceeds this duration",
+              "default": 10000,
+              "minimum": 100
+            },
+            "baseImageWarning": {
+              "type": "integer",
+              "description": "Milliseconds - warn if base image recapture exceeds this duration",
+              "default": 5000,
+              "minimum": 100
+            },
+            "baseImageCritical": {
+              "type": "integer",
+              "description": "Milliseconds - critical if base image recapture exceeds this duration",
+              "default": 15000,
+              "minimum": 100
+            }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "description": "Recovery behavior configuration",
+          "properties": {
+            "skipUpdatesOnStress": {
+              "type": "boolean",
+              "description": "Skip queued invisible operations when system is stressed",
+              "default": true
+            },
+            "maxConsecutiveSlowOps": {
+              "type": "integer",
+              "description": "Number of consecutive slow operations before entering moderate stress",
+              "default": 3,
+              "minimum": 1
+            },
+            "cooldownPeriod": {
+              "type": "integer",
+              "description": "Milliseconds to wait after killing browser before restart",
+              "default": 30000,
+              "minimum": 1000
+            },
+            "killBrowserThreshold": {
+              "type": "integer",
+              "description": "Number of critical events before killing browser",
+              "default": 3,
+              "minimum": 1
+            },
+            "recoveryCheckInterval": {
+              "type": "integer",
+              "description": "Milliseconds between stress level checks",
+              "default": 5000,
+              "minimum": 1000
+            }
+          }
+        },
+        "comment": {
+          "type": "string",
+          "description": "Optional comment about stress management configuration"
+        }
+      }
     }
   }
 }

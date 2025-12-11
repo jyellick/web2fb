@@ -5,6 +5,7 @@ const sharp = require('sharp');
 const fs = require('fs');
 const { loadConfig, getEnabledOverlays } = require('./lib/config');
 const { generateOverlay, detectOverlayRegion, hideOverlayElements } = require('./lib/overlays');
+const StressMonitor = require('./lib/stress-monitor');
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -13,6 +14,9 @@ const configPath = configArg ? configArg.split('=')[1] : null;
 
 // Load configuration
 const config = loadConfig(configPath);
+
+// Initialize stress monitor
+const stressMonitor = new StressMonitor(config.stressManagement || {});
 
 console.log('='.repeat(60));
 console.log(`web2fb - Web to Framebuffer Renderer`);
@@ -197,6 +201,7 @@ function convertToRGB565(rgbBuffer) {
 
 // Update a single overlay
 async function updateOverlay(overlay) {
+  const startTime = Date.now();
   try {
     const state = overlayStates.get(overlay.name);
     if (!state || !baseImageBuffer) {
@@ -226,9 +231,15 @@ async function updateOverlay(overlay) {
 
     // Write only the overlay region to framebuffer
     await writePartialToFramebuffer(compositeImage, region);
+
+    const duration = Date.now() - startTime;
+    stressMonitor.recordOperation('overlay', duration, true);
+
     return true;
   } catch (err) {
     console.error(`Error updating overlay '${overlay.name}':`, err);
+    const duration = Date.now() - startTime;
+    stressMonitor.recordOperation('overlay', duration, false);
     return false;
   }
 }
@@ -402,30 +413,58 @@ async function updateAllOverlays() {
 
   // Re-capture base image when page changes
   const recaptureBaseImage = async (reason) => {
+    // Check if stress monitor allows this operation
+    if (!stressMonitor.shouldAllowBaseImageRecapture()) {
+      return;
+    }
+
+    stressMonitor.startBaseImageOperation();
     const startTime = Date.now();
-    console.log(`Re-capturing base image (${reason})...`);
 
-    baseImageBuffer = await page.screenshot({
-      type: 'jpeg',
-      quality: 90
-    });
+    try {
+      console.log(`Re-capturing base image (${reason})...`);
 
-    await writeToFramebuffer(baseImageBuffer);
-    await updateAllOverlays();
+      baseImageBuffer = await page.screenshot({
+        type: 'jpeg',
+        quality: 90
+      });
 
-    const duration = Date.now() - startTime;
-    console.log(`Base image updated in ${duration}ms`);
+      await writeToFramebuffer(baseImageBuffer);
+      await updateAllOverlays();
+
+      const duration = Date.now() - startTime;
+      console.log(`Base image updated in ${duration}ms`);
+      stressMonitor.recordOperation('baseImage', duration, true);
+    } catch (err) {
+      const duration = Date.now() - startTime;
+      console.error(`Error recapturing base image:`, err);
+      stressMonitor.recordOperation('baseImage', duration, false);
+    } finally {
+      stressMonitor.endBaseImageOperation();
+    }
   };
 
   // Set up change detection
   if (config.changeDetection.enabled) {
     await page.exposeFunction('onPageChange', async () => {
-      console.log('Page change detected');
-      await recaptureBaseImage('page changed');
+      // Guard: check if change detection is allowed under current stress
+      if (!stressMonitor.shouldAllowChangeDetection()) {
+        return;
+      }
+
+      stressMonitor.startChangeDetection();
+      try {
+        console.log('Page change detected');
+        await recaptureBaseImage('page changed');
+      } finally {
+        stressMonitor.endChangeDetection();
+      }
     });
 
     await page.evaluate((changeDetectionConfig) => {
       let lastSnapshot = '';
+      let debounceTimer = null;
+      let periodicCheckInterval = null;
 
       function captureSnapshot() {
         const elements = document.querySelectorAll(changeDetectionConfig.watchSelectors.join(','));
@@ -438,8 +477,44 @@ async function updateAllOverlays() {
         return JSON.stringify(data);
       }
 
+      function startPeriodicCheck() {
+        // Clear existing interval if any
+        if (periodicCheckInterval) {
+          clearInterval(periodicCheckInterval);
+        }
+
+        // Start new interval
+        periodicCheckInterval = setInterval(() => {
+          const currentSnapshot = captureSnapshot();
+          if (currentSnapshot !== lastSnapshot) {
+            console.log('Periodic check detected change');
+            triggerChange();
+          }
+        }, changeDetectionConfig.periodicCheckInterval);
+      }
+
+      function triggerChange() {
+        // Debounce change notifications
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+        }
+
+        debounceTimer = setTimeout(() => {
+          const currentSnapshot = captureSnapshot();
+          if (currentSnapshot !== lastSnapshot) {
+            console.log('Change detected, triggering update');
+            lastSnapshot = currentSnapshot;
+            window.onPageChange();
+
+            // Reset periodic check timer since we just updated
+            startPeriodicCheck();
+          }
+          debounceTimer = null;
+        }, changeDetectionConfig.debounceDelay || 500);
+      }
+
       lastSnapshot = captureSnapshot();
-      console.log('Change detection initialized');
+      console.log('Change detection initialized with debouncing:', changeDetectionConfig.debounceDelay || 500, 'ms');
 
       const observer = new MutationObserver((mutations) => {
         let shouldCheck = false;
@@ -459,12 +534,7 @@ async function updateAllOverlays() {
         }
 
         if (shouldCheck) {
-          const currentSnapshot = captureSnapshot();
-          if (currentSnapshot !== lastSnapshot) {
-            console.log('Change detected, triggering update');
-            lastSnapshot = currentSnapshot;
-            window.onPageChange();
-          }
+          triggerChange();
         }
       });
 
@@ -475,17 +545,10 @@ async function updateAllOverlays() {
         subtree: true
       });
 
-      // Periodic check
-      setInterval(() => {
-        const currentSnapshot = captureSnapshot();
-        if (currentSnapshot !== lastSnapshot) {
-          console.log('Periodic check detected change');
-          lastSnapshot = currentSnapshot;
-          window.onPageChange();
-        }
-      }, changeDetectionConfig.periodicCheckInterval);
+      // Start periodic check
+      startPeriodicCheck();
 
-      console.log(`Change detection active (periodic check: ${changeDetectionConfig.periodicCheckInterval}ms)`);
+      console.log(`Change detection active (periodic check: ${changeDetectionConfig.periodicCheckInterval}ms, debounce: ${changeDetectionConfig.debounceDelay || 500}ms)`);
     }, config.changeDetection);
   }
 
@@ -504,8 +567,52 @@ async function updateAllOverlays() {
     }
   }
 
+  // Recovery monitoring - check for severe stress and restart browser if needed
+  if (stressMonitor.config.enabled) {
+    const recoveryCheckInterval = stressMonitor.config.recovery.recoveryCheckInterval;
+    console.log(`Stress monitoring enabled (recovery check: ${recoveryCheckInterval}ms)`);
+
+    setInterval(async () => {
+      if (stressMonitor.needsBrowserRestart()) {
+        console.error('\n' + '!'.repeat(60));
+        console.error('🚨 CRITICAL: System under severe stress - browser restart required');
+        console.error('!'.repeat(60));
+
+        // Enter recovery mode (blocks all operations)
+        stressMonitor.enterRecoveryMode();
+
+        try {
+          // Kill the browser
+          console.log('Killing browser process...');
+          await browser.close().catch(err => console.warn('Browser close warning:', err.message));
+
+          // Wait for cooldown
+          const cooldown = stressMonitor.config.recovery.cooldownPeriod;
+          console.log(`Waiting ${cooldown}ms for system recovery...`);
+          await new Promise(resolve => setTimeout(resolve, cooldown));
+
+          console.log('System should have recovered. Exiting for restart...');
+          console.log('Configure systemd Restart=always or use PM2 for automatic restart.');
+          console.log('!'.repeat(60) + '\n');
+
+          // Exit cleanly - process manager should restart
+          process.exit(42); // Exit code 42 = restart needed
+        } catch (err) {
+          console.error('Error during recovery:', err);
+          process.exit(1);
+        }
+      }
+    }, recoveryCheckInterval);
+  }
+
   console.log('='.repeat(60));
   console.log('web2fb is running. Press Ctrl+C to stop.');
+  if (stressMonitor.config.enabled) {
+    console.log('Stress monitoring: ENABLED');
+    console.log(`  - Overlay update critical threshold: ${stressMonitor.config.thresholds.overlayUpdateCritical}ms`);
+    console.log(`  - Base image critical threshold: ${stressMonitor.config.thresholds.baseImageCritical}ms`);
+    console.log(`  - Browser restart after ${stressMonitor.config.recovery.killBrowserThreshold} critical events`);
+  }
   console.log('='.repeat(60));
 
   // Cleanup on exit
