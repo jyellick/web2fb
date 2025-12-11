@@ -7,7 +7,7 @@ const path = require('path');
 const { loadConfig, getEnabledOverlays } = require('./lib/config');
 const { generateOverlay, detectOverlayRegion, hideOverlayElements } = require('./lib/overlays');
 const StressMonitor = require('./lib/stress-monitor');
-const { cleanupChromeTempDirs } = require('./lib/cleanup');
+const { cleanupChromeTempDirs, checkProfileSize, formatBytes } = require('./lib/cleanup');
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -273,7 +273,6 @@ async function updateAllOverlays() {
   });
 
   if (cleanupStats.removed > 0) {
-    const { formatBytes } = require('./lib/cleanup');
     console.log(`✓ Removed ${cleanupStats.removed} old Chrome profile(s), freed ${formatBytes(cleanupStats.freedSpace)}`);
   } else {
     console.log('✓ No old Chrome profiles to clean up');
@@ -587,12 +586,59 @@ async function updateAllOverlays() {
     }
   }
 
-  // Recovery monitoring - check for severe stress and restart browser if needed
+  // Recovery monitoring - check for severe stress and profile size
   if (stressMonitor.config.enabled) {
     const recoveryCheckInterval = stressMonitor.config.recovery.recoveryCheckInterval;
+    const profileSizeThreshold = 50 * 1024 * 1024; // 50 MB - critical for tmpfs/RAM
     console.log(`Stress monitoring enabled (recovery check: ${recoveryCheckInterval}ms)`);
+    console.log(`Profile size monitoring: ${formatBytes(profileSizeThreshold)} threshold`);
 
     setInterval(async () => {
+      // Check profile size
+      const profileCheck = checkProfileSize(userDataDir, profileSizeThreshold);
+
+      if (profileCheck.exceeds) {
+        console.error('\n' + '!'.repeat(60));
+        console.error('🚨 CRITICAL: Chrome profile too large - browser restart required');
+        console.error(`Profile size: ${profileCheck.sizeFormatted} (threshold: ${profileCheck.thresholdFormatted})`);
+        console.error('Large profile in tmpfs consumes RAM on Pi!');
+        console.error('!'.repeat(60));
+
+        // Enter recovery mode (blocks all operations)
+        stressMonitor.enterRecoveryMode();
+
+        try {
+          // Kill the browser
+          console.log('Killing browser process...');
+          await browser.close().catch(err => console.warn('Browser close warning:', err.message));
+
+          // Clean up user data directory
+          console.log('Cleaning up Chrome profile...');
+          try {
+            fs.rmSync(userDataDir, { recursive: true, force: true });
+            console.log(`✓ Freed ${profileCheck.sizeFormatted} of RAM`);
+          } catch (err) {
+            console.warn('Warning: Could not remove Chrome profile:', err.message);
+          }
+
+          // Wait for cooldown
+          const cooldown = stressMonitor.config.recovery.cooldownPeriod;
+          console.log(`Waiting ${cooldown}ms for system recovery...`);
+          await new Promise(resolve => setTimeout(resolve, cooldown));
+
+          console.log('System should have recovered. Exiting for restart...');
+          console.log('Configure systemd Restart=always or use PM2 for automatic restart.');
+          console.log('!'.repeat(60) + '\n');
+
+          // Exit cleanly - process manager should restart
+          process.exit(43); // Exit code 43 = profile too large
+        } catch (err) {
+          console.error('Error during recovery:', err);
+          process.exit(1);
+        }
+      }
+
+      // Check stress level
       if (stressMonitor.needsBrowserRestart()) {
         console.error('\n' + '!'.repeat(60));
         console.error('🚨 CRITICAL: System under severe stress - browser restart required');
