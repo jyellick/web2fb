@@ -2,49 +2,18 @@
 
 Production systemd setup for web2fb.
 
-## Create systemd Service
+## Install systemd Service
 
-Create `/etc/systemd/system/web2fb.service`:
+An example systemd service file is included in the repository at `web2fb.service`.
 
-```ini
-[Unit]
-Description=web2fb - Web to Framebuffer Renderer
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=kiosk
-WorkingDirectory=/home/kiosk/web2fb
-ExecStart=/usr/bin/node web2fb.js --config=/home/kiosk/web2fb/config.json
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-# Increase restart limit (stress management may trigger restarts)
-StartLimitBurst=10
-StartLimitIntervalSec=300
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Important Configuration Notes
-
-- **User=kiosk** - Run as kiosk user (must match user created during installation)
-- **WorkingDirectory** - Set to web2fb installation directory
-- **ExecStart** - Use absolute paths for both `node` and config file
-- **--config** - Specify config file path explicitly
-- **Restart=always** - Auto-restart on crashes or browser restarts
-- **StartLimitBurst=10** - Allow frequent restarts (for stress management)
-
-## Install and Enable
+### Quick Install
 
 ```bash
-# Create service file
+# Copy example service file
+sudo cp web2fb.service /etc/systemd/system/web2fb.service
+
+# Edit if needed (adjust paths, user, etc.)
 sudo nano /etc/systemd/system/web2fb.service
-# (paste the content above)
 
 # Reload systemd
 sudo systemctl daemon-reload
@@ -58,6 +27,50 @@ sudo systemctl start web2fb.service
 # Check status
 sudo systemctl status web2fb.service
 ```
+
+## Service File Reference
+
+The included `web2fb.service` file contains:
+
+```ini
+[Unit]
+Description=web2fb - Web to Framebuffer Display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kiosk
+WorkingDirectory=/home/kiosk/web2fb
+EnvironmentFile=/home/kiosk/web2fb/.env
+ExecStart=/usr/bin/node /home/kiosk/web2fb/web2fb.js
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=web2fb
+
+# Security: Run with limited privileges
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Key Configuration
+
+- **User=kiosk** - Run as kiosk user (must be in video group)
+- **WorkingDirectory** - Set to web2fb installation directory
+- **EnvironmentFile** - Loads `.env` for PUPPETEER_EXECUTABLE_PATH
+- **ExecStart** - Uses absolute path to node
+- **Restart=on-failure** - Auto-restart on crashes (stress management triggers clean exits)
+- **NoNewPrivileges** - Security hardening
+
+> **Note**: The service uses `Restart=on-failure` instead of `Restart=always` because stress management performs clean browser restarts within the same process. Only actual crashes trigger a service restart.
 
 ## View Logs
 

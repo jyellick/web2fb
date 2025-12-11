@@ -85,8 +85,11 @@ See [examples/](examples/) for complete configurations.
 ## 🛠️ Running as Service
 
 ```bash
-# Create systemd service
-sudo nano /etc/systemd/system/web2fb.service
+# Copy included service file
+sudo cp web2fb.service /etc/systemd/system/
+
+# Reload systemd
+sudo systemctl daemon-reload
 
 # Enable and start
 sudo systemctl enable web2fb.service
@@ -96,7 +99,7 @@ sudo systemctl start web2fb.service
 sudo journalctl -u web2fb.service -f
 ```
 
-See [systemd documentation](docs/systemd.md) for complete setup.
+See [systemd documentation](docs/systemd.md) for complete setup and configuration options.
 
 ## 🧪 Development
 
