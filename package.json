@@ -29,12 +29,16 @@
     "display",
     "low-memory"
   ],
-  "author": "",
+  "author": "Jason Yellick",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/jyellick/web2fb.git"
   },
+  "bugs": {
+    "url": "https://github.com/jyellick/web2fb/issues"
+  },
+  "homepage": "https://github.com/jyellick/web2fb#readme",
   "engines": {
     "node": ">=18.0.0"
   },
