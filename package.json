@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node web2fb.js",
+    "dev": "node dev-server.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

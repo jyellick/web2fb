@@ -77,9 +77,9 @@ sudo su - kiosk
 For best performance and to prevent conflicts:
 
 ```bash
-# Switch to console-only mode (no GUI)
+# Switch to console-only mode (no GUI login manager)
 sudo raspi-config
-# Navigate to: System Options → Boot / Auto Login → Console Autologin
+# Navigate to: System Options → Boot → Console login
 
 # Disable getty to prevent login prompt on framebuffer
 sudo systemctl disable getty@tty1.service
@@ -97,7 +97,7 @@ sudo su - kiosk
 
 ```bash
 # Clone repository
-git clone https://github.com/your-repo/web2fb.git /home/kiosk/web2fb
+git clone https://github.com/jyellick/web2fb.git /home/kiosk/web2fb
 cd /home/kiosk/web2fb
 
 # Install dependencies
@@ -628,15 +628,35 @@ If restarts are too frequent, tune thresholds:
 
 ### Local Testing (without Pi hardware)
 
-Use test scripts to simulate framebuffer:
+Use the development server to test without actual Raspberry Pi hardware:
 
 ```bash
-# Create simulated framebuffer
-./test-framebuffer.sh
+# Start development server (creates virtual framebuffer and web viewer)
+npm run dev
 
-# View framebuffer as PNG (in another terminal)
-./view-framebuffer.sh
+# Or with custom port
+node dev-server.js --port=8080
+
+# Or with custom dimensions
+WIDTH=1280 HEIGHT=720 npm run dev
 ```
+
+The dev server will:
+- Create a virtual framebuffer at `./test-fb/fb0`
+- Start a web server at http://localhost:3000
+- Provide a live view of the framebuffer with auto-refresh
+
+Then in another terminal, run web2fb against the virtual framebuffer:
+
+```bash
+# Run web2fb with virtual framebuffer
+FRAMEBUFFER_DEVICE=test-fb/fb0 DISPLAY_URL=https://example.com node web2fb.js
+
+# Or with a config file
+FRAMEBUFFER_DEVICE=test-fb/fb0 node web2fb.js --config=examples/dakboard.json
+```
+
+Open http://localhost:3000 in your browser to see the live framebuffer output!
 
 ### Running Tests
 
