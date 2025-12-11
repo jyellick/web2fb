@@ -3,9 +3,11 @@
 const puppeteer = require('puppeteer');
 const sharp = require('sharp');
 const fs = require('fs');
+const path = require('path');
 const { loadConfig, getEnabledOverlays } = require('./lib/config');
 const { generateOverlay, detectOverlayRegion, hideOverlayElements } = require('./lib/overlays');
 const StressMonitor = require('./lib/stress-monitor');
+const { cleanupChromeTempDirs } = require('./lib/cleanup');
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -263,6 +265,20 @@ async function updateAllOverlays() {
   // Display splash screen
   await displaySplashScreen();
 
+  // Cleanup old Chrome temporary directories
+  console.log('Cleaning up old Chrome profiles...');
+  const cleanupStats = cleanupChromeTempDirs({
+    maxAge: 60 * 60 * 1000, // 1 hour
+    minSize: 1024 * 1024    // 1 MB
+  });
+
+  if (cleanupStats.removed > 0) {
+    const { formatBytes } = require('./lib/cleanup');
+    console.log(`✓ Removed ${cleanupStats.removed} old Chrome profile(s), freed ${formatBytes(cleanupStats.freedSpace)}`);
+  } else {
+    console.log('✓ No old Chrome profiles to clean up');
+  }
+
   // Build browser args
   const browserArgs = [
     '--no-sandbox',
@@ -291,9 +307,13 @@ async function updateAllOverlays() {
     '--single-process'
   ];
 
+  // Set user data directory in /tmp/web2fb
+  const userDataDir = path.join('/tmp', 'web2fb-chrome-profile');
+
   const launchOptions = {
     headless: 'new',
-    args: browserArgs
+    args: browserArgs,
+    userDataDir: userDataDir
   };
 
   if (config.browser.executablePath) {
@@ -586,6 +606,14 @@ async function updateAllOverlays() {
           console.log('Killing browser process...');
           await browser.close().catch(err => console.warn('Browser close warning:', err.message));
 
+          // Clean up user data directory
+          console.log('Cleaning up Chrome profile...');
+          try {
+            fs.rmSync(userDataDir, { recursive: true, force: true });
+          } catch (err) {
+            console.warn('Warning: Could not remove Chrome profile:', err.message);
+          }
+
           // Wait for cooldown
           const cooldown = stressMonitor.config.recovery.cooldownPeriod;
           console.log(`Waiting ${cooldown}ms for system recovery...`);
@@ -622,6 +650,15 @@ async function updateAllOverlays() {
       fs.closeSync(fbFd);
     }
     browser.close();
+
+    // Clean up Chrome profile
+    try {
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+      console.log('✓ Cleaned up Chrome profile');
+    } catch (err) {
+      // Ignore cleanup errors on exit
+    }
+
     process.exit(0);
   });
 })();
