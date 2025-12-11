@@ -1,0 +1,15 @@
+{
+  "display": {
+    "url": "https://example.com",
+    "width": 1920,
+    "height": 1080
+  },
+  "overlays": [
+    {
+      "name": "test-clock",
+      "type": "clock",
+      "selector": ".time",
+      "enabled": true
+    }
+  ]
+}
