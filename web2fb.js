@@ -303,7 +303,14 @@ async function updateAllOverlays() {
     '--no-first-run',
     '--no-pings',
     '--no-zygote',
-    '--single-process'
+    '--single-process',
+    // Aggressive cache control for RAM-constrained devices
+    '--disk-cache-size=1',              // Minimal disk cache (1 byte)
+    '--media-cache-size=1',             // Minimal media cache
+    '--disable-application-cache',      // No HTML5 app cache
+    '--disable-offline-load-stale-cache',
+    '--disable-back-forward-cache',
+    '--aggressive-cache-discard'
   ];
 
   // Set user data directory in /tmp/web2fb
@@ -589,7 +596,7 @@ async function updateAllOverlays() {
   // Recovery monitoring - check for severe stress and profile size
   if (stressMonitor.config.enabled) {
     const recoveryCheckInterval = stressMonitor.config.recovery.recoveryCheckInterval;
-    const profileSizeThreshold = 50 * 1024 * 1024; // 50 MB - critical for tmpfs/RAM
+    const profileSizeThreshold = 20 * 1024 * 1024; // 20 MB - conservative for tmpfs/RAM
     console.log(`Stress monitoring enabled (recovery check: ${recoveryCheckInterval}ms)`);
     console.log(`Profile size monitoring: ${formatBytes(profileSizeThreshold)} threshold`);
 
