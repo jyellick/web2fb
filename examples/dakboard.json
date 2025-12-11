@@ -63,7 +63,8 @@
       "maxConsecutiveSlowOps": 3,
       "cooldownPeriod": 30000,
       "killBrowserThreshold": 3,
-      "recoveryCheckInterval": 5000
+      "recoveryCheckInterval": 5000,
+      "profileSizeThresholdMB": 40
     },
     "comment": "Prevents memory thrashing on Pi Zero 2 W by throttling background operations when system is stressed"
   }

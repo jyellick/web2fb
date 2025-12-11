@@ -264,6 +264,12 @@
               "description": "Milliseconds between stress level checks",
               "default": 5000,
               "minimum": 1000
+            },
+            "profileSizeThresholdMB": {
+              "type": "integer",
+              "description": "Megabytes - restart browser if Chrome profile exceeds this size (important for tmpfs/RAM)",
+              "default": 40,
+              "minimum": 1
             }
           }
         },

@@ -625,7 +625,8 @@ async function updateAllOverlays() {
   let recoveryCheckInProgress = false; // Drop-frame behavior for recovery checks
   if (stressMonitor.config.enabled) {
     const recoveryCheckInterval = stressMonitor.config.recovery.recoveryCheckInterval;
-    const profileSizeThreshold = 20 * 1024 * 1024; // 20 MB - conservative for tmpfs/RAM
+    const profileSizeThresholdMB = stressMonitor.config.recovery.profileSizeThresholdMB || 40;
+    const profileSizeThreshold = profileSizeThresholdMB * 1024 * 1024;
     console.log(`Stress monitoring enabled (recovery check: ${recoveryCheckInterval}ms)`);
     console.log(`Profile size monitoring: ${formatBytes(profileSizeThreshold)} threshold`);
 
