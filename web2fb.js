@@ -496,13 +496,17 @@ async function updateAllOverlays() {
 
       function captureSnapshot() {
         const elements = document.querySelectorAll(changeDetectionConfig.watchSelectors.join(','));
-        const data = Array.from(elements).map(el => ({
+        // Limit to first 100 elements to prevent unbounded memory growth
+        const limitedElements = Array.from(elements).slice(0, 100);
+        const data = limitedElements.map(el => ({
           tag: el.tagName,
           src: el.src || '',
           style: el.getAttribute('style') || '',
           class: el.className || ''
         }));
-        return JSON.stringify(data);
+        const snapshot = JSON.stringify(data);
+        // Truncate if snapshot exceeds 100KB
+        return snapshot.length > 102400 ? snapshot.slice(0, 102400) : snapshot;
       }
 
       function startPeriodicCheck() {
@@ -583,6 +587,9 @@ async function updateAllOverlays() {
   // Track intervals for cleanup
   const intervals = [];
 
+  // Track in-progress updates per overlay (drop-frame behavior)
+  const overlayUpdateInProgress = new Map();
+
   // Start overlay update loops
   if (overlayStates.size > 0) {
     for (const overlay of enabledOverlays) {
@@ -592,8 +599,22 @@ async function updateAllOverlays() {
 
       console.log(`Starting overlay '${overlay.name}' update loop (${updateInterval}ms)`);
 
+      // Initialize in-progress flag for this overlay
+      overlayUpdateInProgress.set(overlay.name, false);
+
       const intervalId = setInterval(async () => {
-        await updateOverlay(overlay);
+        // Drop-frame: skip if previous update still in progress
+        if (overlayUpdateInProgress.get(overlay.name)) {
+          console.log(`⏭️  Dropping frame for overlay '${overlay.name}' - previous update still in progress`);
+          return;
+        }
+
+        overlayUpdateInProgress.set(overlay.name, true);
+        try {
+          await updateOverlay(overlay);
+        } finally {
+          overlayUpdateInProgress.set(overlay.name, false);
+        }
       }, updateInterval);
 
       intervals.push(intervalId);
@@ -601,6 +622,7 @@ async function updateAllOverlays() {
   }
 
   // Recovery monitoring - check for severe stress and profile size
+  let recoveryCheckInProgress = false; // Drop-frame behavior for recovery checks
   if (stressMonitor.config.enabled) {
     const recoveryCheckInterval = stressMonitor.config.recovery.recoveryCheckInterval;
     const profileSizeThreshold = 20 * 1024 * 1024; // 20 MB - conservative for tmpfs/RAM
@@ -608,6 +630,14 @@ async function updateAllOverlays() {
     console.log(`Profile size monitoring: ${formatBytes(profileSizeThreshold)} threshold`);
 
     const recoveryIntervalId = setInterval(async () => {
+      // Drop-frame: skip if previous check still in progress
+      if (recoveryCheckInProgress) {
+        console.log('⏭️  Dropping recovery check - previous check still in progress');
+        return;
+      }
+
+      recoveryCheckInProgress = true;
+      try {
       // Check profile size
       const profileCheck = checkProfileSize(userDataDir, profileSizeThreshold);
 
@@ -689,6 +719,9 @@ async function updateAllOverlays() {
           console.error('Error during recovery:', err);
           process.exit(1);
         }
+      }
+      } finally {
+        recoveryCheckInProgress = false;
       }
     }, recoveryCheckInterval);
 
