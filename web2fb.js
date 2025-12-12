@@ -352,12 +352,12 @@ async function updateOverlay(overlay) {
     if (overlay.type === 'clock') {
       const cache = clockCaches.get(overlay.name);
       if (cache) {
-        // Check if minute has changed - re-render if needed
-        if (cache.needsReRender()) {
-          const reRenderOpId = perfMonitor.start('clock:reRender', { name: overlay.name });
-          await cache.preRender();
-          perfMonitor.end(reRenderOpId, { frames: 60 });
-          console.log(`✓ Re-rendered 60 frames for clock '${overlay.name}' (minute changed)`);
+        // Check if we need more frames - extend window in background if needed
+        if (cache.needsMoreFrames()) {
+          const extendOpId = perfMonitor.start('clock:extendWindow', { name: overlay.name });
+          await cache.extendWindow(30); // Pre-render next 30 frames
+          perfMonitor.end(extendOpId, { frames: 30 });
+          console.log(`✓ Extended window by 30 frames for clock '${overlay.name}' (rolling window)`);
         }
 
         if (cache.isValid()) {
