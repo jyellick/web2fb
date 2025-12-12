@@ -7,6 +7,7 @@ const path = require('path');
 const { loadConfig, getEnabledOverlays } = require('./lib/config');
 const { generateOverlay, detectOverlayRegion, hideOverlayElements } = require('./lib/overlays');
 const StressMonitor = require('./lib/stress-monitor');
+const PerfMonitor = require('./lib/perf-monitor');
 const { cleanupChromeTempDirs, checkProfileSize, formatBytes } = require('./lib/cleanup');
 
 // Parse command line arguments
@@ -19,6 +20,9 @@ const config = loadConfig(configPath);
 
 // Initialize stress monitor
 const stressMonitor = new StressMonitor(config.stressManagement || {});
+
+// Initialize performance monitor
+const perfMonitor = new PerfMonitor(config.perfMonitoring || {});
 
 console.log('='.repeat(60));
 console.log(`web2fb - Web to Framebuffer Renderer`);
@@ -107,6 +111,8 @@ async function displaySplashScreen() {
 
 // Write image to framebuffer (full screen)
 async function writeToFramebuffer(imageBuffer) {
+  const perfOpId = perfMonitor.start('writeToFramebuffer:total');
+
   try {
     let sharpImage = sharp(imageBuffer, {
       sequentialRead: true,
@@ -114,6 +120,7 @@ async function writeToFramebuffer(imageBuffer) {
     });
 
     // Convert to raw buffer based on framebuffer format
+    const convOpId = perfMonitor.start('writeToFramebuffer:sharpConvert', { bpp: fbInfo.bpp });
     let rawBuffer;
     if (fbInfo.bpp === 32) {
       rawBuffer = await sharpImage.ensureAlpha().raw().toBuffer();
@@ -121,21 +128,33 @@ async function writeToFramebuffer(imageBuffer) {
       rawBuffer = await sharpImage.removeAlpha().raw().toBuffer();
     } else if (fbInfo.bpp === 16) {
       const rgbBuffer = await sharpImage.removeAlpha().raw().toBuffer();
+      perfMonitor.end(convOpId);
       rawBuffer = convertToRGB565(rgbBuffer);
     } else {
       throw new Error(`Unsupported framebuffer format: ${fbInfo.bpp}bpp`);
     }
+    if (fbInfo.bpp !== 16) {
+      perfMonitor.end(convOpId);
+    }
 
+    // Write to framebuffer device
+    const writeOpId = perfMonitor.start('writeToFramebuffer:fbWrite', { bytes: rawBuffer.length });
     fs.writeSync(fbFd, rawBuffer, 0, rawBuffer.length, 0);
+    perfMonitor.end(writeOpId);
+
+    perfMonitor.end(perfOpId, { success: true });
     return true;
   } catch (err) {
     console.error('Error writing to framebuffer:', err);
+    perfMonitor.end(perfOpId, { success: false, error: err.message });
     return false;
   }
 }
 
 // Write partial image to framebuffer at specific region
 async function writePartialToFramebuffer(imageBuffer, region) {
+  const perfOpId = perfMonitor.start('writePartialToFramebuffer:total', { region });
+
   try {
     let sharpImage = sharp(imageBuffer, {
       sequentialRead: true,
@@ -145,6 +164,7 @@ async function writePartialToFramebuffer(imageBuffer, region) {
     const metadata = await sharpImage.metadata();
 
     // Convert to raw buffer
+    const convOpId = perfMonitor.start('writePartialToFramebuffer:sharpConvert', { bpp: fbInfo.bpp });
     let rawBuffer;
     if (fbInfo.bpp === 32) {
       rawBuffer = await sharpImage.ensureAlpha().raw().toBuffer();
@@ -152,9 +172,13 @@ async function writePartialToFramebuffer(imageBuffer, region) {
       rawBuffer = await sharpImage.removeAlpha().raw().toBuffer();
     } else if (fbInfo.bpp === 16) {
       const rgbBuffer = await sharpImage.removeAlpha().raw().toBuffer();
+      perfMonitor.end(convOpId);
       rawBuffer = convertToRGB565(rgbBuffer);
     } else {
       throw new Error(`Unsupported framebuffer format: ${fbInfo.bpp}bpp`);
+    }
+    if (fbInfo.bpp !== 16) {
+      perfMonitor.end(convOpId);
     }
 
     // Write line by line to correct framebuffer position
@@ -163,21 +187,31 @@ async function writePartialToFramebuffer(imageBuffer, region) {
     const bytesPerLine = regionWidth * fbInfo.bytesPerPixel;
     const fbBytesPerLine = fbInfo.width * fbInfo.bytesPerPixel;
 
+    const writeOpId = perfMonitor.start('writePartialToFramebuffer:fbWrite', {
+      width: regionWidth,
+      height: regionHeight,
+      lines: regionHeight
+    });
     for (let y = 0; y < regionHeight; y++) {
       const srcOffset = y * bytesPerLine;
       const fbOffset = ((region.y + y) * fbBytesPerLine) + (region.x * fbInfo.bytesPerPixel);
       fs.writeSync(fbFd, rawBuffer, srcOffset, bytesPerLine, fbOffset);
     }
+    perfMonitor.end(writeOpId);
 
+    perfMonitor.end(perfOpId, { success: true });
     return true;
   } catch (err) {
     console.error('Error writing partial to framebuffer:', err);
+    perfMonitor.end(perfOpId, { success: false, error: err.message });
     return false;
   }
 }
 
 // Convert RGB to RGB565 (with buffer pooling)
 function convertToRGB565(rgbBuffer) {
+  const perfOpId = perfMonitor.start('convertToRGB565', { inputBytes: rgbBuffer.length });
+
   const requiredSize = (rgbBuffer.length / 3) * 2;
 
   if (!bufferPool.rgb565 || bufferPool.maxSize < requiredSize) {
@@ -202,6 +236,8 @@ function convertToRGB565(rgbBuffer) {
     rgb565Buffer.writeUInt16LE(rgb565, offset);
   }
 
+  perfMonitor.end(perfOpId, { outputBytes: requiredSize });
+
   // Return buffer directly if it's exactly the right size, otherwise return subarray view
   // Note: Using subarray (not slice) to avoid creating a new buffer - reuses pooled buffer
   return requiredSize === bufferPool.maxSize ? rgb565Buffer : rgb565Buffer.subarray(0, requiredSize);
@@ -209,10 +245,13 @@ function convertToRGB565(rgbBuffer) {
 
 // Update a single overlay
 async function updateOverlay(overlay) {
+  const perfOpId = perfMonitor.start('overlay:total', { name: overlay.name, type: overlay.type });
   const startTime = Date.now();
+
   try {
     const state = overlayStates.get(overlay.name);
     if (!state || !baseImageBuffer) {
+      perfMonitor.end(perfOpId, { success: false, reason: 'no state or base image' });
       return false;
     }
 
@@ -222,9 +261,16 @@ async function updateOverlay(overlay) {
     overlay.style = { ...state.style, ...overlay.style };
 
     // Generate overlay content
+    const genOpId = perfMonitor.start('overlay:generate', { name: overlay.name, type: overlay.type });
     const overlayBuffer = generateOverlay(overlay, region);
+    perfMonitor.end(genOpId, { bufferSize: overlayBuffer.length });
 
     // Extract region from base image and composite overlay
+    const compOpId = perfMonitor.start('overlay:composite', {
+      name: overlay.name,
+      width: region.width,
+      height: region.height
+    });
     const compositeImage = await sharp(baseImageBuffer)
       .extract({
         left: region.x,
@@ -235,18 +281,22 @@ async function updateOverlay(overlay) {
       .composite([{ input: overlayBuffer }])
       .png()
       .toBuffer();
+    perfMonitor.end(compOpId, { bufferSize: compositeImage.length });
 
     // Write only the overlay region to framebuffer
+    // (writePartialToFramebuffer has its own instrumentation)
     await writePartialToFramebuffer(compositeImage, region);
 
     const duration = Date.now() - startTime;
     stressMonitor.recordOperation('overlay', duration, true);
+    perfMonitor.end(perfOpId, { success: true });
 
     return true;
   } catch (err) {
     console.error(`Error updating overlay '${overlay.name}':`, err);
     const duration = Date.now() - startTime;
     stressMonitor.recordOperation('overlay', duration, false);
+    perfMonitor.end(perfOpId, { success: false, error: err.message });
     return false;
   }
 }
@@ -376,8 +426,11 @@ async function initializeBrowserAndRun() {
   }
 
   console.log('Launching browser...');
+  const launchOpId = perfMonitor.start('browser:launch');
   browser = await puppeteer.launch(launchOptions);
   page = await browser.newPage();
+  perfMonitor.end(launchOpId);
+  perfMonitor.sampleMemory('after-browser-launch');
 
   // Set user agent if configured
   if (config.browser.userAgent) {
@@ -401,10 +454,13 @@ async function initializeBrowserAndRun() {
 
   // Load page
   console.log(`Loading page: ${config.display.url}`);
+  const gotoOpId = perfMonitor.start('browser:pageLoad', { url: config.display.url });
   await page.goto(config.display.url, {
     waitUntil: 'load',
     timeout: config.browser.timeout
   });
+  perfMonitor.end(gotoOpId);
+  perfMonitor.sampleMemory('after-page-load');
 
   // Scroll to load lazy images
   if (config.performance.scrollToLoadLazy) {
@@ -417,10 +473,13 @@ async function initializeBrowserAndRun() {
   // Wait for images
   if (config.performance.waitForImages) {
     console.log('Waiting for images to load...');
+    const waitImagesOpId = perfMonitor.start('browser:waitForImages');
     await page.waitForFunction(() => {
       const images = Array.from(document.images);
       return images.every(img => img.complete && img.naturalHeight !== 0);
     }, { timeout: config.browser.imageLoadTimeout });
+    perfMonitor.end(waitImagesOpId);
+    perfMonitor.sampleMemory('after-images-loaded');
     console.log('All images loaded');
   }
 
@@ -472,10 +531,13 @@ async function initializeBrowserAndRun() {
 
   // Capture base image
   console.log('Capturing base image...');
+  const screenshotOpId = perfMonitor.start('browser:screenshot');
   baseImageBuffer = await page.screenshot({
     type: 'jpeg',
     quality: 90
   });
+  perfMonitor.end(screenshotOpId, { bufferSize: baseImageBuffer.length });
+  perfMonitor.sampleMemory('after-base-screenshot');
   console.log('Base image captured');
 
   // Write base image to framebuffer
@@ -497,15 +559,18 @@ async function initializeBrowserAndRun() {
     }
 
     stressMonitor.startBaseImageOperation();
+    const perfOpId = perfMonitor.start('baseImage:recapture', { reason });
     const startTime = Date.now();
 
     try {
       console.log(`Re-capturing base image (${reason})...`);
 
+      const screenshotOpId = perfMonitor.start('baseImage:screenshot');
       baseImageBuffer = await page.screenshot({
         type: 'jpeg',
         quality: 90
       });
+      perfMonitor.end(screenshotOpId, { bufferSize: baseImageBuffer.length });
 
       await writeToFramebuffer(baseImageBuffer);
       await updateAllOverlays();
@@ -513,10 +578,12 @@ async function initializeBrowserAndRun() {
       const duration = Date.now() - startTime;
       console.log(`Base image updated in ${duration}ms`);
       stressMonitor.recordOperation('baseImage', duration, true);
+      perfMonitor.end(perfOpId, { success: true });
     } catch (err) {
       const duration = Date.now() - startTime;
       console.error(`Error recapturing base image:`, err);
       stressMonitor.recordOperation('baseImage', duration, false);
+      perfMonitor.end(perfOpId, { success: false, error: err.message });
     } finally {
       stressMonitor.endBaseImageOperation();
     }
@@ -719,6 +786,16 @@ async function initializeBrowserAndRun() {
     intervals.push(recoveryIntervalId);
   }
 
+  // Set up periodic performance reporting if configured
+  if (perfMonitor.config.enabled && perfMonitor.config.reportInterval > 0) {
+    console.log(`Performance reporting enabled (interval: ${perfMonitor.config.reportInterval}ms)`);
+    const reportIntervalId = setInterval(() => {
+      perfMonitor.sampleMemory('periodic-sample');
+      perfMonitor.printReport();
+    }, perfMonitor.config.reportInterval);
+    intervals.push(reportIntervalId);
+  }
+
   console.log('='.repeat(60));
   console.log('web2fb is running. Press Ctrl+C to stop.');
   if (stressMonitor.config.enabled) {
@@ -727,6 +804,11 @@ async function initializeBrowserAndRun() {
     console.log(`  - Base image critical threshold: ${stressMonitor.config.thresholds.baseImageCritical}ms`);
     console.log(`  - Browser restart after ${stressMonitor.config.recovery.killBrowserThreshold} critical events`);
     console.log(`  - Critical events decay on successful operations`);
+  }
+  if (perfMonitor.config.enabled) {
+    console.log('Performance monitoring: ENABLED');
+    if (perfMonitor.config.verbose) console.log('  - Verbose logging: ON');
+    if (perfMonitor.config.logToFile) console.log(`  - Logging to file: ${perfMonitor.config.logToFile}`);
   }
   console.log('='.repeat(60));
 }
@@ -752,6 +834,13 @@ async function initializeBrowserAndRun() {
     // Clear all intervals
     console.log(`Clearing ${intervals.length} interval(s)...`);
     intervals.forEach(id => clearInterval(id));
+
+    // Print final performance report if enabled
+    if (perfMonitor.config.enabled) {
+      perfMonitor.sampleMemory('shutdown');
+      perfMonitor.printReport();
+      perfMonitor.close();
+    }
 
     if (fbFd) {
       fs.closeSync(fbFd);

@@ -43,6 +43,7 @@ node web2fb.js
 - **[Running as Service](docs/systemd.md)** - Production systemd setup
 - **[Overlay System](docs/overlays.md)** - Local rendering for clocks, dates, custom elements
 - **[Stress Management](docs/stress-management.md)** - Memory protection for constrained hardware
+- **[Performance Profiling](docs/performance-profiling.md)** - Identify bottlenecks and optimize performance
 - **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
 - **[Development](docs/development.md)** - Testing, contributing, custom overlays
 

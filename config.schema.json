@@ -193,6 +193,37 @@
         }
       }
     },
+    "perfMonitoring": {
+      "type": "object",
+      "description": "Performance monitoring and profiling configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable performance monitoring",
+          "default": false
+        },
+        "verbose": {
+          "type": "boolean",
+          "description": "Enable verbose logging of all operations",
+          "default": false
+        },
+        "logToFile": {
+          "type": "string",
+          "description": "Path to performance log file (optional)"
+        },
+        "reportInterval": {
+          "type": "integer",
+          "description": "Milliseconds between periodic performance reports (0 = disabled)",
+          "default": 0,
+          "minimum": 0
+        },
+        "trackMemory": {
+          "type": "boolean",
+          "description": "Track memory usage for each operation",
+          "default": true
+        }
+      }
+    },
     "stressManagement": {
       "type": "object",
       "description": "System stress detection and recovery management for resource-constrained hardware",

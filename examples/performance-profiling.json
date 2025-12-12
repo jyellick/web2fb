@@ -1,0 +1,67 @@
+{
+  "name": "Performance Profiling Example",
+  "description": "Configuration for profiling web2fb performance on resource-constrained hardware",
+  "display": {
+    "url": "https://example.com",
+    "width": 800,
+    "height": 480,
+    "framebufferDevice": "/dev/fb0"
+  },
+  "browser": {
+    "timeout": 180000,
+    "imageLoadTimeout": 120000,
+    "disableAnimations": true
+  },
+  "overlays": [
+    {
+      "name": "clock",
+      "type": "clock",
+      "selector": "#clock",
+      "enabled": true,
+      "updateInterval": 1000,
+      "format": {
+        "hour12": false,
+        "showSeconds": true
+      },
+      "detectStyle": true,
+      "comment": "Monitor overlay:total, overlay:generate, and overlay:composite timings"
+    }
+  ],
+  "changeDetection": {
+    "enabled": true,
+    "watchSelectors": ["img", "[style*='background']"],
+    "watchAttributes": ["src", "style", "class", "srcset"],
+    "periodicCheckInterval": 120000,
+    "debounceDelay": 500
+  },
+  "performance": {
+    "scrollToLoadLazy": true,
+    "waitForImages": true,
+    "bufferPooling": true,
+    "splashScreen": null
+  },
+  "perfMonitoring": {
+    "enabled": true,
+    "verbose": false,
+    "logToFile": "/tmp/web2fb-perf.jsonl",
+    "reportInterval": 300000,
+    "trackMemory": true
+  },
+  "stressManagement": {
+    "enabled": true,
+    "thresholds": {
+      "overlayUpdateWarning": 3000,
+      "overlayUpdateCritical": 10000,
+      "baseImageWarning": 5000,
+      "baseImageCritical": 15000
+    },
+    "recovery": {
+      "skipUpdatesOnStress": true,
+      "maxConsecutiveSlowOps": 3,
+      "cooldownPeriod": 30000,
+      "killBrowserThreshold": 3,
+      "recoveryCheckInterval": 5000,
+      "profileSizeThresholdMB": 40
+    }
+  }
+}
