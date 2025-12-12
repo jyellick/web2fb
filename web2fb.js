@@ -318,12 +318,12 @@ async function preRenderClockFrames() {
         cache.detectedStyle = state.style;
       }
 
-      // Pre-render all 60 frames
+      // Pre-render initial frames
       const renderOpId = perfMonitor.start('clock:preRender', { name: overlay.name });
       await cache.preRender();
-      perfMonitor.end(renderOpId, { frames: 60 });
+      perfMonitor.end(renderOpId, { frames: cache.windowSize });
 
-      console.log(`✓ Pre-rendered 60 frames for clock '${overlay.name}'`);
+      console.log(`✓ Pre-rendered ${cache.windowSize} frames for clock '${overlay.name}'`);
     } catch (err) {
       console.error(`Error pre-rendering clock '${overlay.name}':`, err);
     }
