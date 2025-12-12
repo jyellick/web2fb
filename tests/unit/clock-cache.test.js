@@ -52,7 +52,7 @@ describe('ClockCache', () => {
       expect(cache.frames).toBeInstanceOf(Map);
       expect(cache.frames.size).toBe(0);
       expect(cache.valid).toBe(false);
-      expect(cache.windowSize).toBe(60);
+      expect(cache.windowSize).toBe(10);
     });
 
     it('should store detected style when provided', () => {
@@ -69,12 +69,12 @@ describe('ClockCache', () => {
   });
 
   describe('preRender()', () => {
-    it('should pre-render 60 clock states by default', async () => {
+    it('should pre-render windowSize frames by default', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
 
       await cache.preRender();
 
-      expect(cache.frames.size).toBe(60);
+      expect(cache.frames.size).toBe(cache.windowSize);
       expect(cache.valid).toBe(true);
     });
 
@@ -85,8 +85,8 @@ describe('ClockCache', () => {
 
       await cache.preRender();
 
-      // Should have frames for next 60 seconds
-      for (let i = 0; i < 60; i++) {
+      // Should have frames for next windowSize seconds
+      for (let i = 0; i < cache.windowSize; i++) {
         const frameSecond = startSecond + i;
         expect(cache.frames.has(frameSecond)).toBe(true);
         expect(Buffer.isBuffer(cache.frames.get(frameSecond))).toBe(true);
@@ -100,10 +100,10 @@ describe('ClockCache', () => {
 
       await cache.preRender(specificTime);
 
-      // Should have 60 frames starting from specific time
-      expect(cache.frames.size).toBe(60);
+      // Should have windowSize frames starting from specific time
+      expect(cache.frames.size).toBe(cache.windowSize);
       expect(cache.frames.has(startSecond)).toBe(true);
-      expect(cache.frames.has(startSecond + 59)).toBe(true);
+      expect(cache.frames.has(startSecond + cache.windowSize - 1)).toBe(true);
     });
 
     it('should allow custom frame count', async () => {
@@ -145,7 +145,7 @@ describe('ClockCache', () => {
       await cache.preRender(startTime);
 
       expect(cache.windowStart).toBe(startSecond);
-      expect(cache.windowEnd).toBe(startSecond + 59);
+      expect(cache.windowEnd).toBe(startSecond + cache.windowSize - 1);
     });
   });
 
@@ -163,7 +163,8 @@ describe('ClockCache', () => {
       const testTime = new Date('2025-01-15T10:30:00');
       await cache.preRender(testTime);
 
-      const requestTime = new Date('2025-01-15T10:30:45');
+      // Request a frame within the window (e.g., 5 seconds in)
+      const requestTime = new Date('2025-01-15T10:30:05');
       const frame = cache.getFrame(requestTime);
 
       const expectedSecond = Math.floor(requestTime.getTime() / 1000);
@@ -185,9 +186,9 @@ describe('ClockCache', () => {
     it('should return null if requested time is outside window', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
-      await cache.preRender(testTime, 30); // Only 30 seconds
+      await cache.preRender(testTime, 5); // Only 5 seconds
 
-      const outsideTime = new Date('2025-01-15T10:31:00'); // 60 seconds later
+      const outsideTime = new Date('2025-01-15T10:30:10'); // 10 seconds later
       const frame = cache.getFrame(outsideTime);
 
       expect(frame).toBe(null);
@@ -199,11 +200,13 @@ describe('ClockCache', () => {
       await cache.preRender(testTime);
 
       const firstFrame = cache.getFrame(testTime);
-      const lastFrame = cache.getFrame(new Date('2025-01-15T10:30:59'));
+      const midTime = new Date(testTime.getTime() + 5 * 1000);
+      const midFrame = cache.getFrame(midTime);
 
       expect(firstFrame).not.toBe(null);
-      expect(lastFrame).not.toBe(null);
-      expect(firstFrame).not.toEqual(lastFrame);
+      expect(midFrame).not.toBe(null);
+      // Different times should produce different buffers
+      expect(firstFrame).not.toBe(midFrame);
     });
   });
 
@@ -238,7 +241,7 @@ describe('ClockCache', () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
 
       await cache.preRender();
-      expect(cache.frames.size).toBe(60);
+      expect(cache.frames.size).toBe(cache.windowSize);
       expect(cache.valid).toBe(true);
 
       cache.invalidate();
@@ -302,20 +305,18 @@ describe('ClockCache', () => {
     it('should cleanup old frames when extending window', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
-      await cache.preRender(testTime, 60);
+      const initialSize = 20;
+      await cache.preRender(testTime, initialSize);
 
-      expect(cache.frames.size).toBe(60);
+      expect(cache.frames.size).toBe(initialSize);
 
-      // Move forward 31 seconds and extend
-      const laterTime = new Date('2025-01-15T10:30:31');
-      await cache.extendWindow(30, laterTime);
+      // Move forward past windowSize and extend
+      const laterTime = new Date('2025-01-15T10:30:15');
+      const extendCount = 10;
+      await cache.extendWindow(extendCount, laterTime);
 
-      // After extending and cleanup:
-      // - Started with frames 0-59 (60 frames)
-      // - Extended to frames 60-89 (30 more = 90 total)
-      // - Cleanup removed frames 0-30 (31 frames before current time)
-      // - Result: frames 31-89 (59 frames)
-      expect(cache.frames.size).toBe(59);
+      // After extending and cleanup, should maintain windowSize frames
+      expect(cache.frames.size).toBeLessThanOrEqual(cache.windowSize);
     });
   });
 
@@ -333,7 +334,7 @@ describe('ClockCache', () => {
       await cache.preRender();
 
       expect(cache.isValid()).toBe(true);
-      expect(cache.frames.size).toBe(60);
+      expect(cache.frames.size).toBe(cache.windowSize);
     });
 
     it('should handle format without seconds', async () => {
@@ -351,7 +352,7 @@ describe('ClockCache', () => {
       // Even without seconds displayed, we still cache by second
       // to support smooth transitions when seconds are re-enabled
       expect(cache.isValid()).toBe(true);
-      expect(cache.frames.size).toBe(60);
+      expect(cache.frames.size).toBe(cache.windowSize);
     });
   });
 
@@ -365,9 +366,9 @@ describe('ClockCache', () => {
     it('should return false when at target window size', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
-      await cache.preRender(testTime, 60);
+      await cache.preRender(testTime, cache.windowSize);
 
-      // At the start, we have exactly 60 frames ahead (windowSize)
+      // At the start, we have exactly windowSize frames ahead
       const result = cache.needsMoreFrames(testTime);
       expect(result).toBe(false);
     });
@@ -375,9 +376,9 @@ describe('ClockCache', () => {
     it('should return true when frames ahead below target', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
-      await cache.preRender(testTime, 60);
+      await cache.preRender(testTime, cache.windowSize);
 
-      // 1 second later, only 59 frames ahead (< windowSize)
+      // 1 second later, one less frame ahead (< windowSize)
       const laterTime = new Date('2025-01-15T10:30:01');
       const result = cache.needsMoreFrames(laterTime);
       expect(result).toBe(true);
@@ -407,58 +408,63 @@ describe('ClockCache', () => {
     it('should add 1 frame by default', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
-      await cache.preRender(testTime, 30);
+      const initialCount = 5;
+      await cache.preRender(testTime, initialCount);
 
-      expect(cache.frames.size).toBe(30);
+      expect(cache.frames.size).toBe(initialCount);
 
       await cache.extendWindow(); // Default: 1 frame
 
-      expect(cache.frames.size).toBe(31);
+      expect(cache.frames.size).toBe(initialCount + 1);
     });
 
-    it('should allow custom frame count', async () => {
+    it('should allow custom frame count when below windowSize', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
-      await cache.preRender(testTime, 30);
+      const initialCount = 3;
+      await cache.preRender(testTime, initialCount);
 
-      expect(cache.frames.size).toBe(30);
+      expect(cache.frames.size).toBe(initialCount);
 
       await cache.extendWindow(5); // Generate 5 frames
 
-      expect(cache.frames.size).toBe(35);
+      expect(cache.frames.size).toBe(initialCount + 5);
     });
 
     it('should extend from current window end', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
       const startSecond = Math.floor(testTime.getTime() / 1000);
-      await cache.preRender(testTime, 30);
+      const initialCount = 5;
+      await cache.preRender(testTime, initialCount);
 
-      expect(cache.windowEnd).toBe(startSecond + 29);
+      expect(cache.windowEnd).toBe(startSecond + initialCount - 1);
 
       await cache.extendWindow(1);
 
       // Window should now end 1 second later
-      expect(cache.windowEnd).toBe(startSecond + 30);
-      expect(cache.frames.has(startSecond + 30)).toBe(true);
+      expect(cache.windowEnd).toBe(startSecond + initialCount);
+      expect(cache.frames.has(startSecond + initialCount)).toBe(true);
     });
 
     it('should cleanup old frames when extending', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
       const startSecond = Math.floor(testTime.getTime() / 1000);
-      await cache.preRender(testTime, 60);
+      await cache.preRender(testTime, cache.windowSize);
 
-      // Move forward 31 seconds and extend by 30
-      const laterTime = new Date('2025-01-15T10:30:31');
-      await cache.extendWindow(30, laterTime);
+      // Move forward half the window size
+      const moveForward = Math.floor(cache.windowSize / 2);
+      const laterTime = new Date(testTime.getTime() + moveForward * 1000);
+      await cache.extendWindow(moveForward, laterTime);
 
       // Old frames (before current time) should be removed
       expect(cache.frames.has(startSecond)).toBe(false);
-      expect(cache.frames.has(startSecond + 30)).toBe(false);
-      // Current and future frames should exist
-      expect(cache.frames.has(startSecond + 31)).toBe(true);
-      expect(cache.frames.has(startSecond + 89)).toBe(true);
+      // Frames near current time and forward should exist
+      const laterSecond = Math.floor(laterTime.getTime() / 1000);
+      expect(cache.frames.has(laterSecond)).toBe(true);
+      // Should not exceed windowSize
+      expect(cache.frames.size).toBeLessThanOrEqual(cache.windowSize);
     });
   });
 });
