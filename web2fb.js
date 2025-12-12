@@ -8,6 +8,7 @@ const { loadConfig, getEnabledOverlays } = require('./lib/config');
 const { generateOverlay, detectOverlayRegion, hideOverlayElements } = require('./lib/overlays');
 const StressMonitor = require('./lib/stress-monitor');
 const PerfMonitor = require('./lib/perf-monitor');
+const ClockCache = require('./lib/clock-cache');
 const { cleanupChromeTempDirs, checkProfileSize, formatBytes } = require('./lib/cleanup');
 
 // Parse command line arguments
@@ -35,6 +36,9 @@ let fbInfo = null;
 
 // Overlay state (persistent)
 const overlayStates = new Map(); // name -> {region, style, baseRegionBuffer}
+
+// Clock cache (persistent) - pre-rendered clock frames
+const clockCaches = new Map(); // name -> ClockCache instance
 
 // Base image (persistent)
 let baseImageBuffer = null;
@@ -244,6 +248,7 @@ function convertToRGB565(rgbBuffer) {
 }
 
 // Extract and cache base image regions for all overlays
+// Also pre-render clock frames if applicable
 async function cacheBaseRegions() {
   if (!baseImageBuffer || overlayStates.size === 0) {
     return;
@@ -280,6 +285,47 @@ async function cacheBaseRegions() {
   perfMonitor.end(cacheOpId);
 }
 
+// Pre-render clock frames for all clock overlays
+async function preRenderClockFrames() {
+  const enabledOverlays = getEnabledOverlays(config);
+  const clockOverlays = enabledOverlays.filter(o => o.type === 'clock');
+
+  if (clockOverlays.length === 0) {
+    return;
+  }
+
+  const preRenderOpId = perfMonitor.start('clock:preRenderAll', { count: clockOverlays.length });
+
+  for (const overlay of clockOverlays) {
+    const state = overlayStates.get(overlay.name);
+    if (!state || !state.baseRegionBuffer) {
+      continue;
+    }
+
+    try {
+      // Create or update clock cache
+      let cache = clockCaches.get(overlay.name);
+      if (!cache) {
+        cache = new ClockCache(overlay, state.baseRegionBuffer, state.region);
+        clockCaches.set(overlay.name, cache);
+      } else {
+        cache.updateBaseRegion(state.baseRegionBuffer);
+      }
+
+      // Pre-render all 60 frames
+      const renderOpId = perfMonitor.start('clock:preRender', { name: overlay.name });
+      await cache.preRender();
+      perfMonitor.end(renderOpId, { frames: 60 });
+
+      console.log(`✓ Pre-rendered 60 frames for clock '${overlay.name}'`);
+    } catch (err) {
+      console.error(`Error pre-rendering clock '${overlay.name}':`, err);
+    }
+  }
+
+  perfMonitor.end(preRenderOpId);
+}
+
 // Update a single overlay
 async function updateOverlay(overlay) {
   const perfOpId = perfMonitor.start('overlay:total', { name: overlay.name, type: overlay.type });
@@ -297,22 +343,38 @@ async function updateOverlay(overlay) {
     // Merge detected style with overlay style
     overlay.style = { ...state.style, ...overlay.style };
 
-    // Generate overlay content
-    const genOpId = perfMonitor.start('overlay:generate', { name: overlay.name, type: overlay.type });
-    const overlayBuffer = generateOverlay(overlay, region);
-    perfMonitor.end(genOpId, { bufferSize: overlayBuffer.length });
+    let compositeImage;
 
-    // Composite overlay onto cached base region (no extract needed!)
-    const compOpId = perfMonitor.start('overlay:composite', {
-      name: overlay.name,
-      width: region.width,
-      height: region.height
-    });
-    const compositeImage = await sharp(state.baseRegionBuffer)
-      .composite([{ input: overlayBuffer }])
-      .png()
-      .toBuffer();
-    perfMonitor.end(compOpId, { bufferSize: compositeImage.length });
+    // For clock overlays, use pre-rendered frames if available
+    if (overlay.type === 'clock') {
+      const cache = clockCaches.get(overlay.name);
+      if (cache && cache.isValid()) {
+        // Use pre-rendered frame - no generation or compositing needed!
+        const fetchOpId = perfMonitor.start('clock:fetchFrame', { name: overlay.name });
+        compositeImage = cache.getFrame();
+        perfMonitor.end(fetchOpId);
+      }
+    }
+
+    // Fallback: generate and composite on-the-fly (for non-clock or cache miss)
+    if (!compositeImage) {
+      // Generate overlay content
+      const genOpId = perfMonitor.start('overlay:generate', { name: overlay.name, type: overlay.type });
+      const overlayBuffer = generateOverlay(overlay, region);
+      perfMonitor.end(genOpId, { bufferSize: overlayBuffer.length });
+
+      // Composite overlay onto cached base region (no extract needed!)
+      const compOpId = perfMonitor.start('overlay:composite', {
+        name: overlay.name,
+        width: region.width,
+        height: region.height
+      });
+      compositeImage = await sharp(state.baseRegionBuffer)
+        .composite([{ input: overlayBuffer }])
+        .png()
+        .toBuffer();
+      perfMonitor.end(compOpId, { bufferSize: compositeImage.length });
+    }
 
     // Write only the overlay region to framebuffer
     // (writePartialToFramebuffer has its own instrumentation)
@@ -320,7 +382,7 @@ async function updateOverlay(overlay) {
 
     const duration = Date.now() - startTime;
     stressMonitor.recordOperation('overlay', duration, true);
-    perfMonitor.end(perfOpId, { success: true });
+    perfMonitor.end(perfOpId, { success: true, preRendered: overlay.type === 'clock' });
 
     return true;
   } catch (err) {
@@ -571,17 +633,22 @@ async function initializeBrowserAndRun() {
   perfMonitor.sampleMemory('after-base-screenshot');
   console.log('Base image captured');
 
-  // Write base image to framebuffer
-  console.log('Writing base image to framebuffer...');
-  await writeToFramebuffer(baseImageBuffer);
-
   // Cache base regions for overlays
   if (overlayStates.size > 0) {
     console.log('Caching base regions for overlays...');
     await cacheBaseRegions();
   }
 
-  // Initial overlay render
+  // Pre-render clock frames BEFORE displaying page
+  // This eliminates the gap where page is visible but clock is not
+  console.log('Pre-rendering clock frames...');
+  await preRenderClockFrames();
+
+  // Write base image to framebuffer
+  console.log('Writing base image to framebuffer...');
+  await writeToFramebuffer(baseImageBuffer);
+
+  // Initial overlay render (clocks use pre-rendered frames!)
   if (overlayStates.size > 0) {
     console.log('Rendering initial overlays...');
     await updateAllOverlays();
@@ -613,6 +680,9 @@ async function initializeBrowserAndRun() {
 
       // Re-cache base regions for overlays
       await cacheBaseRegions();
+
+      // Re-pre-render clock frames
+      await preRenderClockFrames();
 
       await updateAllOverlays();
 
