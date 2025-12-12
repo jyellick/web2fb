@@ -351,11 +351,21 @@ async function updateOverlay(overlay) {
     // For clock overlays, use pre-rendered frames if available
     if (overlay.type === 'clock') {
       const cache = clockCaches.get(overlay.name);
-      if (cache && cache.isValid()) {
-        // Use pre-rendered frame - no generation or compositing needed!
-        const fetchOpId = perfMonitor.start('clock:fetchFrame', { name: overlay.name });
-        compositeImage = cache.getFrame();
-        perfMonitor.end(fetchOpId);
+      if (cache) {
+        // Check if minute has changed - re-render if needed
+        if (cache.needsReRender()) {
+          const reRenderOpId = perfMonitor.start('clock:reRender', { name: overlay.name });
+          await cache.preRender();
+          perfMonitor.end(reRenderOpId, { frames: 60 });
+          console.log(`✓ Re-rendered 60 frames for clock '${overlay.name}' (minute changed)`);
+        }
+
+        if (cache.isValid()) {
+          // Use pre-rendered frame - no generation or compositing needed!
+          const fetchOpId = perfMonitor.start('clock:fetchFrame', { name: overlay.name });
+          compositeImage = cache.getFrame();
+          perfMonitor.end(fetchOpId);
+        }
       }
     }
 

@@ -276,4 +276,54 @@ describe('ClockCache', () => {
       expect(Object.keys(cache.frames).length).toBe(60);
     });
   });
+
+  describe('needsReRender()', () => {
+    it('should return true if cache is not valid', () => {
+      const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
+
+      expect(cache.needsReRender()).toBe(true);
+    });
+
+    it('should return false if same minute', async () => {
+      const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
+      await cache.preRender();
+
+      const now = new Date();
+      const sameMinute = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes(), 30);
+
+      expect(cache.needsReRender(sameMinute)).toBe(false);
+    });
+
+    it('should return true if minute has changed', async () => {
+      const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
+
+      // Pre-render for current time
+      await cache.preRender();
+
+      const now = new Date();
+      const nextMinute = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes() + 1, 0);
+
+      expect(cache.needsReRender(nextMinute)).toBe(true);
+    });
+
+    it('should handle minute wrap around (59 -> 00)', async () => {
+      const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
+
+      // Manually set lastPreRenderMinute to 59
+      cache.lastPreRenderMinute = 59;
+      cache.valid = true;
+
+      const time00 = new Date(2025, 0, 15, 10, 0, 0);
+
+      expect(cache.needsReRender(time00)).toBe(true);
+    });
+
+    it('should use current time if no date provided', async () => {
+      const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
+      await cache.preRender();
+
+      // Should not need re-render if we just pre-rendered
+      expect(cache.needsReRender()).toBe(false);
+    });
+  });
 });
