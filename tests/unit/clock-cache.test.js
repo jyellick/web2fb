@@ -53,7 +53,6 @@ describe('ClockCache', () => {
       expect(cache.frames.size).toBe(0);
       expect(cache.valid).toBe(false);
       expect(cache.windowSize).toBe(60);
-      expect(cache.preRenderThreshold).toBe(30);
     });
 
     it('should store detected style when provided', () => {
@@ -363,23 +362,23 @@ describe('ClockCache', () => {
       expect(cache.needsMoreFrames()).toBe(true);
     });
 
-    it('should return false when plenty of frames remain', async () => {
+    it('should return false when at target window size', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
       await cache.preRender(testTime, 60);
 
-      // At the start, we have 60 frames remaining
+      // At the start, we have exactly 60 frames ahead (windowSize)
       const result = cache.needsMoreFrames(testTime);
       expect(result).toBe(false);
     });
 
-    it('should return true when frames remaining below threshold', async () => {
+    it('should return true when frames ahead below target', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
       await cache.preRender(testTime, 60);
 
-      // 31 seconds later, only 29 frames remain (below 30 threshold)
-      const laterTime = new Date('2025-01-15T10:30:31');
+      // 1 second later, only 59 frames ahead (< windowSize)
+      const laterTime = new Date('2025-01-15T10:30:01');
       const result = cache.needsMoreFrames(laterTime);
       expect(result).toBe(true);
     });
@@ -388,7 +387,7 @@ describe('ClockCache', () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       await cache.preRender();
 
-      // Should not need more frames if we just pre-rendered
+      // Should not need more frames if we just pre-rendered full windowSize
       expect(cache.needsMoreFrames()).toBe(false);
     });
 
@@ -405,16 +404,28 @@ describe('ClockCache', () => {
   });
 
   describe('extendWindow()', () => {
-    it('should add more frames to the window', async () => {
+    it('should add 1 frame by default', async () => {
       const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
       const testTime = new Date('2025-01-15T10:30:00');
       await cache.preRender(testTime, 30);
 
       expect(cache.frames.size).toBe(30);
 
-      await cache.extendWindow(30);
+      await cache.extendWindow(); // Default: 1 frame
 
-      expect(cache.frames.size).toBe(60);
+      expect(cache.frames.size).toBe(31);
+    });
+
+    it('should allow custom frame count', async () => {
+      const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion);
+      const testTime = new Date('2025-01-15T10:30:00');
+      await cache.preRender(testTime, 30);
+
+      expect(cache.frames.size).toBe(30);
+
+      await cache.extendWindow(5); // Generate 5 frames
+
+      expect(cache.frames.size).toBe(35);
     });
 
     it('should extend from current window end', async () => {
@@ -425,11 +436,11 @@ describe('ClockCache', () => {
 
       expect(cache.windowEnd).toBe(startSecond + 29);
 
-      await cache.extendWindow(30);
+      await cache.extendWindow(1);
 
-      // Window should now end 59 seconds from start
-      expect(cache.windowEnd).toBe(startSecond + 59);
-      expect(cache.frames.has(startSecond + 59)).toBe(true);
+      // Window should now end 1 second later
+      expect(cache.windowEnd).toBe(startSecond + 30);
+      expect(cache.frames.has(startSecond + 30)).toBe(true);
     });
 
     it('should cleanup old frames when extending', async () => {
@@ -438,7 +449,7 @@ describe('ClockCache', () => {
       const startSecond = Math.floor(testTime.getTime() / 1000);
       await cache.preRender(testTime, 60);
 
-      // Move forward 31 seconds
+      // Move forward 31 seconds and extend by 30
       const laterTime = new Date('2025-01-15T10:30:31');
       await cache.extendWindow(30, laterTime);
 
