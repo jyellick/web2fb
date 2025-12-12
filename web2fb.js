@@ -113,33 +113,42 @@ async function displaySplashScreen() {
   }
 }
 
+// Convert image buffer to framebuffer format
+async function convertImageToFramebufferFormat(imageBuffer, operationName = 'convert') {
+  const sharpImage = sharp(imageBuffer, {
+    sequentialRead: true,
+    limitInputPixels: false
+  });
+
+  const convOpId = perfMonitor.start(`${operationName}:sharpConvert`, { bpp: fbInfo.bpp });
+  let rawBuffer;
+
+  if (fbInfo.bpp === 32) {
+    rawBuffer = await sharpImage.ensureAlpha().raw().toBuffer();
+  } else if (fbInfo.bpp === 24) {
+    rawBuffer = await sharpImage.removeAlpha().raw().toBuffer();
+  } else if (fbInfo.bpp === 16) {
+    const rgbBuffer = await sharpImage.removeAlpha().raw().toBuffer();
+    perfMonitor.end(convOpId);
+    rawBuffer = convertToRGB565(rgbBuffer);
+  } else {
+    throw new Error(`Unsupported framebuffer format: ${fbInfo.bpp}bpp`);
+  }
+
+  if (fbInfo.bpp !== 16) {
+    perfMonitor.end(convOpId);
+  }
+
+  return { rawBuffer, sharpImage };
+}
+
 // Write image to framebuffer (full screen)
 async function writeToFramebuffer(imageBuffer) {
   const perfOpId = perfMonitor.start('writeToFramebuffer:total');
 
   try {
-    let sharpImage = sharp(imageBuffer, {
-      sequentialRead: true,
-      limitInputPixels: false
-    });
-
     // Convert to raw buffer based on framebuffer format
-    const convOpId = perfMonitor.start('writeToFramebuffer:sharpConvert', { bpp: fbInfo.bpp });
-    let rawBuffer;
-    if (fbInfo.bpp === 32) {
-      rawBuffer = await sharpImage.ensureAlpha().raw().toBuffer();
-    } else if (fbInfo.bpp === 24) {
-      rawBuffer = await sharpImage.removeAlpha().raw().toBuffer();
-    } else if (fbInfo.bpp === 16) {
-      const rgbBuffer = await sharpImage.removeAlpha().raw().toBuffer();
-      perfMonitor.end(convOpId);
-      rawBuffer = convertToRGB565(rgbBuffer);
-    } else {
-      throw new Error(`Unsupported framebuffer format: ${fbInfo.bpp}bpp`);
-    }
-    if (fbInfo.bpp !== 16) {
-      perfMonitor.end(convOpId);
-    }
+    const { rawBuffer } = await convertImageToFramebufferFormat(imageBuffer, 'writeToFramebuffer');
 
     // Write to framebuffer device
     const writeOpId = perfMonitor.start('writeToFramebuffer:fbWrite', { bytes: rawBuffer.length });
@@ -160,30 +169,9 @@ async function writePartialToFramebuffer(imageBuffer, region) {
   const perfOpId = perfMonitor.start('writePartialToFramebuffer:total', { region });
 
   try {
-    let sharpImage = sharp(imageBuffer, {
-      sequentialRead: true,
-      limitInputPixels: false
-    });
-
-    const metadata = await sharpImage.metadata();
-
     // Convert to raw buffer
-    const convOpId = perfMonitor.start('writePartialToFramebuffer:sharpConvert', { bpp: fbInfo.bpp });
-    let rawBuffer;
-    if (fbInfo.bpp === 32) {
-      rawBuffer = await sharpImage.ensureAlpha().raw().toBuffer();
-    } else if (fbInfo.bpp === 24) {
-      rawBuffer = await sharpImage.removeAlpha().raw().toBuffer();
-    } else if (fbInfo.bpp === 16) {
-      const rgbBuffer = await sharpImage.removeAlpha().raw().toBuffer();
-      perfMonitor.end(convOpId);
-      rawBuffer = convertToRGB565(rgbBuffer);
-    } else {
-      throw new Error(`Unsupported framebuffer format: ${fbInfo.bpp}bpp`);
-    }
-    if (fbInfo.bpp !== 16) {
-      perfMonitor.end(convOpId);
-    }
+    const { rawBuffer, sharpImage } = await convertImageToFramebufferFormat(imageBuffer, 'writePartialToFramebuffer');
+    const metadata = await sharpImage.metadata();
 
     // Write line by line to correct framebuffer position
     const regionWidth = metadata.width;
@@ -468,7 +456,8 @@ async function restartBrowser(reason) {
 }
 
 // Initialize browser and start main loop
-async function initializeBrowserAndRun() {
+// Launch browser and create page
+async function launchBrowser() {
   // Cleanup old Chrome temporary directories
   console.log('Cleaning up old Chrome profiles...');
   const cleanupStats = cleanupChromeTempDirs({
@@ -556,6 +545,49 @@ async function initializeBrowserAndRun() {
     height: fbInfo.height,
     deviceScaleFactor: 1,
   });
+}
+
+// Detect and configure overlays
+async function detectAndConfigureOverlays() {
+  const enabledOverlays = getEnabledOverlays(config);
+  if (enabledOverlays.length === 0) {
+    return enabledOverlays;
+  }
+
+  console.log(`Detecting ${enabledOverlays.length} overlay(s)...`);
+
+  // Clear existing overlay states on restart
+  overlayStates.clear();
+
+  const detectAllOpId = perfMonitor.start('overlay:detectAll', { count: enabledOverlays.length });
+  for (const overlay of enabledOverlays) {
+    const detectOpId = perfMonitor.start('overlay:detectRegion', { name: overlay.name, selector: overlay.selector });
+    const detected = await detectOverlayRegion(page, overlay);
+    perfMonitor.end(detectOpId, { found: !!detected });
+
+    if (detected) {
+      overlayStates.set(overlay.name, detected);
+      console.log(`✓ Overlay '${overlay.name}' detected at (${detected.region.x}, ${detected.region.y}), size: ${detected.region.width}x${detected.region.height}`);
+    } else {
+      console.warn(`✗ Overlay '${overlay.name}' not found (selector: ${overlay.selector})`);
+    }
+  }
+  perfMonitor.end(detectAllOpId, { detected: overlayStates.size });
+
+  // Hide overlay elements
+  const detectedOverlays = enabledOverlays.filter(o => overlayStates.has(o.name));
+  if (detectedOverlays.length > 0) {
+    const hideOpId = perfMonitor.start('overlay:hideElements', { count: detectedOverlays.length });
+    await hideOverlayElements(page, detectedOverlays);
+    perfMonitor.end(hideOpId);
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  return enabledOverlays;
+}
+
+async function initializeBrowserAndRun() {
+  await launchBrowser();
 
   // Load page
   console.log(`Loading page: ${config.display.url}`);
@@ -609,37 +641,7 @@ async function initializeBrowserAndRun() {
   await new Promise(resolve => setTimeout(resolve, 2000));
 
   // Detect and configure overlays
-  const enabledOverlays = getEnabledOverlays(config);
-  if (enabledOverlays.length > 0) {
-    console.log(`Detecting ${enabledOverlays.length} overlay(s)...`);
-
-    // Clear existing overlay states on restart
-    overlayStates.clear();
-
-    const detectAllOpId = perfMonitor.start('overlay:detectAll', { count: enabledOverlays.length });
-    for (const overlay of enabledOverlays) {
-      const detectOpId = perfMonitor.start('overlay:detectRegion', { name: overlay.name, selector: overlay.selector });
-      const detected = await detectOverlayRegion(page, overlay);
-      perfMonitor.end(detectOpId, { found: !!detected });
-
-      if (detected) {
-        overlayStates.set(overlay.name, detected);
-        console.log(`✓ Overlay '${overlay.name}' detected at (${detected.region.x}, ${detected.region.y}), size: ${detected.region.width}x${detected.region.height}`);
-      } else {
-        console.warn(`✗ Overlay '${overlay.name}' not found (selector: ${overlay.selector})`);
-      }
-    }
-    perfMonitor.end(detectAllOpId, { detected: overlayStates.size });
-
-    // Hide overlay elements
-    const detectedOverlays = enabledOverlays.filter(o => overlayStates.has(o.name));
-    if (detectedOverlays.length > 0) {
-      const hideOpId = perfMonitor.start('overlay:hideElements', { count: detectedOverlays.length });
-      await hideOverlayElements(page, detectedOverlays);
-      perfMonitor.end(hideOpId);
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-  }
+  const enabledOverlays = await detectAndConfigureOverlays();
 
   // Capture base image
   console.log('Capturing base image...');
