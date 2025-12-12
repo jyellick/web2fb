@@ -243,6 +243,43 @@ function convertToRGB565(rgbBuffer) {
   return requiredSize === bufferPool.maxSize ? rgb565Buffer : rgb565Buffer.subarray(0, requiredSize);
 }
 
+// Extract and cache base image regions for all overlays
+async function cacheBaseRegions() {
+  if (!baseImageBuffer || overlayStates.size === 0) {
+    return;
+  }
+
+  const cacheOpId = perfMonitor.start('overlay:cacheBaseRegions', { count: overlayStates.size });
+
+  for (const [name, state] of overlayStates) {
+    try {
+      const extractOpId = perfMonitor.start('overlay:extractBaseRegion', {
+        name,
+        width: state.region.width,
+        height: state.region.height
+      });
+
+      // Extract and cache the base region for this overlay
+      state.baseRegionBuffer = await sharp(baseImageBuffer)
+        .extract({
+          left: state.region.x,
+          top: state.region.y,
+          width: state.region.width,
+          height: state.region.height
+        })
+        .png()
+        .toBuffer();
+
+      perfMonitor.end(extractOpId, { bufferSize: state.baseRegionBuffer.length });
+    } catch (err) {
+      console.error(`Error caching base region for overlay '${name}':`, err);
+      state.baseRegionBuffer = null;
+    }
+  }
+
+  perfMonitor.end(cacheOpId);
+}
+
 // Update a single overlay
 async function updateOverlay(overlay) {
   const perfOpId = perfMonitor.start('overlay:total', { name: overlay.name, type: overlay.type });
@@ -250,8 +287,8 @@ async function updateOverlay(overlay) {
 
   try {
     const state = overlayStates.get(overlay.name);
-    if (!state || !baseImageBuffer) {
-      perfMonitor.end(perfOpId, { success: false, reason: 'no state or base image' });
+    if (!state || !state.baseRegionBuffer) {
+      perfMonitor.end(perfOpId, { success: false, reason: 'no state or base region' });
       return false;
     }
 
@@ -265,19 +302,13 @@ async function updateOverlay(overlay) {
     const overlayBuffer = generateOverlay(overlay, region);
     perfMonitor.end(genOpId, { bufferSize: overlayBuffer.length });
 
-    // Extract region from base image and composite overlay
+    // Composite overlay onto cached base region (no extract needed!)
     const compOpId = perfMonitor.start('overlay:composite', {
       name: overlay.name,
       width: region.width,
       height: region.height
     });
-    const compositeImage = await sharp(baseImageBuffer)
-      .extract({
-        left: region.x,
-        top: region.y,
-        width: region.width,
-        height: region.height
-      })
+    const compositeImage = await sharp(state.baseRegionBuffer)
       .composite([{ input: overlayBuffer }])
       .png()
       .toBuffer();
@@ -544,6 +575,12 @@ async function initializeBrowserAndRun() {
   console.log('Writing base image to framebuffer...');
   await writeToFramebuffer(baseImageBuffer);
 
+  // Cache base regions for overlays
+  if (overlayStates.size > 0) {
+    console.log('Caching base regions for overlays...');
+    await cacheBaseRegions();
+  }
+
   // Initial overlay render
   if (overlayStates.size > 0) {
     console.log('Rendering initial overlays...');
@@ -573,6 +610,10 @@ async function initializeBrowserAndRun() {
       perfMonitor.end(screenshotOpId, { bufferSize: baseImageBuffer.length });
 
       await writeToFramebuffer(baseImageBuffer);
+
+      // Re-cache base regions for overlays
+      await cacheBaseRegions();
+
       await updateAllOverlays();
 
       const duration = Date.now() - startTime;
