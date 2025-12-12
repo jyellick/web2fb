@@ -831,8 +831,10 @@ async function initializeBrowserAndRun() {
   if (perfMonitor.config.enabled && perfMonitor.config.reportInterval > 0) {
     console.log(`Performance reporting enabled (interval: ${perfMonitor.config.reportInterval}ms)`);
     const reportIntervalId = setInterval(() => {
+      console.log('\n[DEBUG] Performance report interval triggered');
       perfMonitor.sampleMemory('periodic-sample');
       perfMonitor.printReport();
+      console.log('[DEBUG] Performance report complete\n');
     }, perfMonitor.config.reportInterval);
     intervals.push(reportIntervalId);
   }
