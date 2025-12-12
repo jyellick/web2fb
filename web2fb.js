@@ -4,12 +4,25 @@ const puppeteer = require('puppeteer');
 const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 const { loadConfig, getEnabledOverlays } = require('./lib/config');
 const { generateOverlay, detectOverlayRegion, hideOverlayElements } = require('./lib/overlays');
 const StressMonitor = require('./lib/stress-monitor');
 const PerfMonitor = require('./lib/perf-monitor');
 const ClockCache = require('./lib/clock-cache');
 const { cleanupChromeTempDirs, checkProfileSize, formatBytes } = require('./lib/cleanup');
+
+// Get current git commit hash
+function getGitCommit() {
+  try {
+    return execSync('git rev-parse --short HEAD', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore']
+    }).trim();
+  } catch (err) {
+    return 'unknown';
+  }
+}
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -25,8 +38,10 @@ const stressMonitor = new StressMonitor(config.stressManagement || {});
 // Initialize performance monitor
 const perfMonitor = new PerfMonitor(config.perfMonitoring || {});
 
+const gitCommit = getGitCommit();
+
 console.log('='.repeat(60));
-console.log(`web2fb - Web to Framebuffer Renderer`);
+console.log(`web2fb - Web to Framebuffer Renderer (${gitCommit})`);
 if (config.name) console.log(`Configuration: ${config.name}`);
 console.log('='.repeat(60));
 
@@ -933,7 +948,7 @@ async function initializeBrowserAndRun() {
   }
 
   console.log('='.repeat(60));
-  console.log('web2fb is running. Press Ctrl+C to stop.');
+  console.log(`web2fb is running (${gitCommit}). Press Ctrl+C to stop.`);
   if (stressMonitor.config.enabled) {
     console.log('Stress monitoring: ENABLED');
     console.log(`  - Overlay update critical threshold: ${stressMonitor.config.thresholds.overlayUpdateCritical}ms`);
