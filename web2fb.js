@@ -332,6 +332,60 @@ async function preRenderClockFrames() {
   perfMonitor.end(preRenderOpId);
 }
 
+// Composite all overlays onto base image and return the result
+async function compositeOverlaysOntoBase(baseBuffer) {
+  const enabledOverlays = getEnabledOverlays(config);
+  if (enabledOverlays.length === 0) {
+    return baseBuffer;
+  }
+
+  let currentImage = sharp(baseBuffer);
+  const composites = [];
+
+  for (const overlay of enabledOverlays) {
+    const state = overlayStates.get(overlay.name);
+    if (!state || !state.baseRegionBuffer) continue;
+
+    const { region } = state;
+
+    // Merge detected style with overlay style
+    const mergedOverlay = {
+      ...overlay,
+      style: { ...state.style, ...overlay.style }
+    };
+
+    let overlayImage;
+
+    // For clock overlays, use pre-rendered frame if available
+    if (overlay.type === 'clock') {
+      const cache = clockCaches.get(overlay.name);
+      if (cache && cache.isValid()) {
+        overlayImage = cache.getFrame();
+      }
+    }
+
+    // Fallback: generate overlay on-the-fly
+    if (!overlayImage) {
+      const overlayBuffer = generateOverlay(mergedOverlay, region);
+      overlayImage = overlayBuffer;
+    }
+
+    // Add to composite list with position
+    composites.push({
+      input: overlayImage,
+      top: region.y,
+      left: region.x
+    });
+  }
+
+  // Composite all overlays onto base image
+  if (composites.length > 0) {
+    currentImage = currentImage.composite(composites);
+  }
+
+  return await currentImage.png().toBuffer();
+}
+
 // Update a single overlay
 async function updateOverlay(overlay) {
   const perfOpId = perfMonitor.start('overlay:total', { name: overlay.name, type: overlay.type });
@@ -681,17 +735,15 @@ async function initializeBrowserAndRun() {
   await preRenderClockFrames();
   perfMonitor.sampleMemory('after-clock-prerender');
 
-  // Write base image to framebuffer
-  console.log('Writing base image to framebuffer...');
-  await writeToFramebuffer(baseImageBuffer);
+  // Composite initial overlays onto base image, then write to framebuffer
+  // This prevents visible flash from writing base then immediately overwriting with overlays
+  console.log('Compositing initial overlays onto base image...');
+  const compositedImage = await compositeOverlaysOntoBase(baseImageBuffer);
 
-  // Initial overlay render (clocks use pre-rendered frames!)
-  if (overlayStates.size > 0) {
-    console.log('Rendering initial overlays...');
-    await updateAllOverlays();
-    perfMonitor.sampleMemory('after-initial-overlays');
-    console.log('Overlays displayed');
-  }
+  console.log('Writing composited image to framebuffer...');
+  await writeToFramebuffer(compositedImage);
+  perfMonitor.sampleMemory('after-initial-overlays');
+  console.log('Initial display complete (base + overlays)');
 
   // Re-capture base image when page changes
   const recaptureBaseImage = async (reason) => {
@@ -714,15 +766,16 @@ async function initializeBrowserAndRun() {
       });
       perfMonitor.end(screenshotOpId, { bufferSize: baseImageBuffer.length });
 
-      await writeToFramebuffer(baseImageBuffer);
-
-      // Re-cache base regions for overlays
+      // Re-cache base regions for overlays (updates overlayStates with new base)
       await cacheBaseRegions();
 
-      // Re-pre-render clock frames
+      // Re-pre-render clock frames with new base regions
       await preRenderClockFrames();
 
-      await updateAllOverlays();
+      // Composite overlays onto new base image, then write to framebuffer
+      // This ensures pre-rendered frames use the new background
+      const compositedImage = await compositeOverlaysOntoBase(baseImageBuffer);
+      await writeToFramebuffer(compositedImage);
 
       const duration = Date.now() - startTime;
       console.log(`Base image updated in ${duration}ms`);
