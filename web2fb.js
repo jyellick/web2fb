@@ -869,7 +869,7 @@ async function initializeBrowserAndRun() {
   await initializeBrowserAndRun();
 
   // Cleanup on exit
-  process.on('SIGINT', () => {
+  const shutdown = () => {
     console.log('\nShutting down...');
 
     // Clear all intervals
@@ -902,5 +902,8 @@ async function initializeBrowserAndRun() {
     }
 
     process.exit(0);
-  });
+  };
+
+  process.on('SIGINT', shutdown);   // Ctrl+C
+  process.on('SIGTERM', shutdown);  // systemctl stop
 })();
