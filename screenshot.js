@@ -46,7 +46,7 @@ function detectFramebuffer() {
       bytesPerPixel: bpp / 8,
       stride: xres * (bpp / 8)
     };
-  } catch (err) {
+  } catch (_err) {
     // Fallback to common settings if detection fails
     console.warn('Could not detect framebuffer properties, using defaults');
     const fallbackWidth = parseInt(process.env.WIDTH || '1920', 10);

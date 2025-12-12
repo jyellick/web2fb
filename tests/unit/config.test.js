@@ -1,5 +1,4 @@
 const { loadConfig, getEnabledOverlays } = require('../../lib/config');
-const fs = require('fs');
 const path = require('path');
 
 // Mock process.env and fs

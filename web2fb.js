@@ -64,7 +64,7 @@ function detectFramebuffer() {
       bytesPerPixel: bpp / 8,
       stride: xres * (bpp / 8)
     };
-  } catch (err) {
+  } catch (_err) {
     console.warn('Could not detect framebuffer properties, using config values');
     return {
       width: config.display.width,
@@ -113,8 +113,6 @@ async function writeToFramebuffer(imageBuffer) {
       limitInputPixels: false
     });
 
-    const metadata = await sharpImage.metadata();
-
     // Convert to raw buffer based on framebuffer format
     let rawBuffer;
     if (fbInfo.bpp === 32) {
@@ -128,7 +126,7 @@ async function writeToFramebuffer(imageBuffer) {
       throw new Error(`Unsupported framebuffer format: ${fbInfo.bpp}bpp`);
     }
 
-    const written = fs.writeSync(fbFd, rawBuffer, 0, rawBuffer.length, 0);
+    fs.writeSync(fbFd, rawBuffer, 0, rawBuffer.length, 0);
     return true;
   } catch (err) {
     console.error('Error writing to framebuffer:', err);
@@ -219,7 +217,6 @@ async function updateOverlay(overlay) {
     }
 
     const { region } = state;
-    const style = overlay.detectStyle ? state.style : (overlay.style || {});
 
     // Merge detected style with overlay style
     overlay.style = { ...state.style, ...overlay.style };
@@ -289,7 +286,6 @@ async function restartBrowser(reason) {
     if (userDataDir) {
       console.log('Cleaning up Chrome profile...');
       try {
-        const stats = fs.statSync(userDataDir);
         fs.rmSync(userDataDir, { recursive: true, force: true });
         console.log(`✓ Cleaned up Chrome profile`);
       } catch (err) {
@@ -770,7 +766,7 @@ async function initializeBrowserAndRun() {
       try {
         fs.rmSync(userDataDir, { recursive: true, force: true });
         console.log('✓ Cleaned up Chrome profile');
-      } catch (err) {
+      } catch (_err) {
         // Ignore cleanup errors on exit
       }
     }

@@ -41,7 +41,7 @@ if (configPath || fs.existsSync('config.json')) {
       config.display.height = userConfig.display.height || config.display.height;
     }
     console.log('Loaded display dimensions from config');
-  } catch (err) {
+  } catch (_err) {
     // Config loading failed, use defaults
     console.log('Using default dimensions (1920x1080)');
   }
@@ -110,7 +110,7 @@ async function framebufferToPNG() {
       .toBuffer();
 
     return pngBuffer;
-  } catch (err) {
+  } catch (_err) {
     console.error('Error converting framebuffer:', err.message);
     throw err;
   }
@@ -126,7 +126,7 @@ function startServer() {
       const pngBuffer = await framebufferToPNG();
       res.type('image/png');
       res.send(pngBuffer);
-    } catch (err) {
+    } catch (_err) {
       res.status(500).send('Error rendering framebuffer');
     }
   });
@@ -391,7 +391,7 @@ function startServer() {
 try {
   setupFramebuffer();
   startServer();
-} catch (err) {
+} catch (_err) {
   console.error('Failed to start development server:', err);
   process.exit(1);
 }
