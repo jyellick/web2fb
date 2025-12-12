@@ -616,8 +616,12 @@ async function initializeBrowserAndRun() {
     // Clear existing overlay states on restart
     overlayStates.clear();
 
+    const detectAllOpId = perfMonitor.start('overlay:detectAll', { count: enabledOverlays.length });
     for (const overlay of enabledOverlays) {
+      const detectOpId = perfMonitor.start('overlay:detectRegion', { name: overlay.name, selector: overlay.selector });
       const detected = await detectOverlayRegion(page, overlay);
+      perfMonitor.end(detectOpId, { found: !!detected });
+
       if (detected) {
         overlayStates.set(overlay.name, detected);
         console.log(`✓ Overlay '${overlay.name}' detected at (${detected.region.x}, ${detected.region.y}), size: ${detected.region.width}x${detected.region.height}`);
@@ -625,11 +629,14 @@ async function initializeBrowserAndRun() {
         console.warn(`✗ Overlay '${overlay.name}' not found (selector: ${overlay.selector})`);
       }
     }
+    perfMonitor.end(detectAllOpId, { detected: overlayStates.size });
 
     // Hide overlay elements
     const detectedOverlays = enabledOverlays.filter(o => overlayStates.has(o.name));
     if (detectedOverlays.length > 0) {
+      const hideOpId = perfMonitor.start('overlay:hideElements', { count: detectedOverlays.length });
       await hideOverlayElements(page, detectedOverlays);
+      perfMonitor.end(hideOpId);
       await new Promise(resolve => setTimeout(resolve, 500));
     }
   }
@@ -655,6 +662,7 @@ async function initializeBrowserAndRun() {
   // This eliminates the gap where page is visible but clock is not
   console.log('Pre-rendering clock frames...');
   await preRenderClockFrames();
+  perfMonitor.sampleMemory('after-clock-prerender');
 
   // Write base image to framebuffer
   console.log('Writing base image to framebuffer...');
@@ -664,6 +672,7 @@ async function initializeBrowserAndRun() {
   if (overlayStates.size > 0) {
     console.log('Rendering initial overlays...');
     await updateAllOverlays();
+    perfMonitor.sampleMemory('after-initial-overlays');
     console.log('Overlays displayed');
   }
 
@@ -940,14 +949,23 @@ async function initializeBrowserAndRun() {
 
 // Main entry point
 (async () => {
+  perfMonitor.sampleMemory('startup');
+  const initOpId = perfMonitor.start('init:total');
+
   // Open framebuffer (only once, persists across browser restarts)
+  const fbOpId = perfMonitor.start('init:framebuffer');
   if (!openFramebuffer()) {
     console.error('Failed to initialize framebuffer');
     process.exit(1);
   }
+  perfMonitor.end(fbOpId);
 
   // Display splash screen (only on first startup)
+  const splashOpId = perfMonitor.start('init:splash');
   await displaySplashScreen();
+  perfMonitor.end(splashOpId);
+
+  perfMonitor.end(initOpId);
 
   // Initialize browser and start main loop
   await initializeBrowserAndRun();
