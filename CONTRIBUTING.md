@@ -56,6 +56,52 @@ npm run format:check
 
 ## Testing
 
+### Test-Driven Development (TDD)
+
+**We practice TDD for all new features and bug fixes.** Write tests first, then implement:
+
+1. **Write failing tests** - Define expected behavior
+2. **Make tests pass** - Implement minimal code
+3. **Refactor** - Clean up while tests stay green
+
+**Example workflow:**
+
+```bash
+# 1. Create test file
+touch tests/unit/my-feature.test.js
+
+# 2. Write tests that fail
+npm test -- tests/unit/my-feature.test.js
+
+# 3. Implement feature until tests pass
+npm run test:watch -- tests/unit/my-feature.test.js
+
+# 4. Verify all tests still pass
+npm test
+
+# 5. Lint and format
+npm run lint
+npm run format
+```
+
+### What to Test
+
+**Always write tests for:**
+- ✅ New modules/classes (unit tests)
+- ✅ Bug fixes (regression tests)
+- ✅ Configuration options (ensure they're stored and used)
+- ✅ Public API methods
+- ✅ Edge cases and error handling
+
+**Example: The reportInterval bug**
+```javascript
+// This test would have caught the missing reportInterval bug:
+it('should store reportInterval from config', () => {
+  const perfMon = new PerfMonitor({ reportInterval: 60000 });
+  expect(perfMon.config.reportInterval).toBe(60000);
+});
+```
+
 ### Local Development
 
 Use the development server for quick testing without Pi hardware:
@@ -80,10 +126,13 @@ FRAMEBUFFER_DEVICE=test-fb/fb0 node web2fb.js --config=examples/simple.json
 # All tests
 npm test
 
-# Watch mode
+# Watch mode (recommended during development)
 npm run test:watch
 
-# Coverage
+# Specific test file
+npm test -- tests/unit/my-feature.test.js
+
+# Coverage report
 npm run test:coverage
 
 # Linting
