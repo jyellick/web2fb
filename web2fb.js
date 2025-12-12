@@ -306,10 +306,13 @@ async function preRenderClockFrames() {
       // Create or update clock cache
       let cache = clockCaches.get(overlay.name);
       if (!cache) {
-        cache = new ClockCache(overlay, state.baseRegionBuffer, state.region);
+        // Pass detected style so pre-rendered frames match live appearance
+        cache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.style);
         clockCaches.set(overlay.name, cache);
       } else {
         cache.updateBaseRegion(state.baseRegionBuffer);
+        // Update detected style in case it changed
+        cache.detectedStyle = state.style;
       }
 
       // Pre-render all 60 frames

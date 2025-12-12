@@ -48,8 +48,21 @@ describe('ClockCache', () => {
       expect(cache.overlay).toBe(mockOverlay);
       expect(cache.baseRegionBuffer).toBe(mockBaseRegionBuffer);
       expect(cache.region).toBe(mockRegion);
+      expect(cache.detectedStyle).toEqual({});
       expect(cache.frames).toEqual({});
       expect(cache.valid).toBe(false);
+    });
+
+    it('should store detected style when provided', () => {
+      const detectedStyle = {
+        fontSize: 48,
+        fontWeight: 'bold',
+        color: '#ff0000'
+      };
+
+      const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion, detectedStyle);
+
+      expect(cache.detectedStyle).toEqual(detectedStyle);
     });
   });
 
