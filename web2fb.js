@@ -58,6 +58,9 @@ const clockCaches = new Map(); // name -> ClockCache instance
 // Base image (persistent)
 let baseImageBuffer = null;
 
+// Page change transition state
+let pendingBaseTransition = null; // { baseBuffer, overlayStates, switchTime }
+
 // Buffer pool for reducing GC pressure (persistent)
 const bufferPool = {
   rgb565: null,
@@ -392,6 +395,41 @@ async function updateOverlay(overlay) {
   const startTime = Date.now();
 
   try {
+    // Check if it's time to switch to new base (smooth transition)
+    if (pendingBaseTransition) {
+      const currentSecond = Math.floor(Date.now() / 1000);
+      if (currentSecond >= pendingBaseTransition.switchSecond) {
+        console.log(`\n${'='.repeat(60)}`);
+        console.log(`🔄 SWITCHING TO NEW BASE at ${new Date().toLocaleTimeString()}`);
+        console.log(`${'='.repeat(60)}`);
+
+        // Atomic swap
+        baseImageBuffer = pendingBaseTransition.baseBuffer;
+        overlayStates.clear();
+        for (const [name, state] of pendingBaseTransition.overlayStates) {
+          overlayStates.set(name, state);
+        }
+
+        // Replace clock caches with new ones
+        if (pendingBaseTransition.newCaches) {
+          clockCaches.clear();
+          for (const [name, cache] of pendingBaseTransition.newCaches) {
+            clockCaches.set(name, cache);
+          }
+        }
+
+        // Write full composited image to framebuffer
+        const compositedImage = await compositeOverlaysOntoBase(baseImageBuffer);
+        await writeToFramebuffer(compositedImage);
+
+        console.log('✓ Transition complete - now using new base + new frames');
+        console.log(`${'='.repeat(60)}\n`);
+
+        // Clear pending transition
+        pendingBaseTransition = null;
+      }
+    }
+
     const state = overlayStates.get(overlay.name);
     if (!state || !state.baseRegionBuffer) {
       perfMonitor.end(perfOpId, { success: false, reason: 'no state or base region' });
@@ -758,32 +796,95 @@ async function initializeBrowserAndRun() {
 
     try {
       console.log(`Re-capturing base image (${reason})...`);
+      console.log('Old cache continues serving frames during preparation...');
 
+      // Screenshot new page
       const screenshotOpId = perfMonitor.start('baseImage:screenshot');
-      baseImageBuffer = await page.screenshot({
+      const newBaseImageBuffer = await page.screenshot({
         type: 'jpeg',
         quality: 90
       });
-      perfMonitor.end(screenshotOpId, { bufferSize: baseImageBuffer.length });
+      perfMonitor.end(screenshotOpId, { bufferSize: newBaseImageBuffer.length });
 
-      // Re-cache base regions for overlays (updates overlayStates with new base)
-      await cacheBaseRegions();
+      // Extract new base regions (but don't replace current ones yet)
+      const newOverlayStates = new Map();
+      const enabledOverlays = getEnabledOverlays(config);
 
-      // Re-pre-render clock frames with new base regions
-      await preRenderClockFrames();
+      for (const overlay of enabledOverlays) {
+        if (!overlay.selector) continue;
 
-      // Composite overlays onto new base image, then write to framebuffer
-      // This ensures pre-rendered frames use the new background
-      const compositedImage = await compositeOverlaysOntoBase(baseImageBuffer);
-      await writeToFramebuffer(compositedImage);
+        const state = await detectOverlayRegion(page, overlay);
+        if (state) {
+          // Extract base region from new screenshot
+          const baseRegionBuffer = await sharp(newBaseImageBuffer)
+            .extract({
+              left: state.region.x,
+              top: state.region.y,
+              width: state.region.width,
+              height: state.region.height
+            })
+            .png()
+            .toBuffer();
+
+          newOverlayStates.set(overlay.name, {
+            ...state,
+            baseRegionBuffer
+          });
+        }
+      }
+
+      // Calculate switch time: when current cache will run out
+      const currentTime = Date.now();
+      const currentSecond = Math.floor(currentTime / 1000);
+
+      // Find the earliest cache end time
+      let switchSecond = currentSecond + 10; // Default to 10s from now
+      for (const cache of clockCaches.values()) {
+        if (cache.isValid() && cache.windowEnd) {
+          // Switch at windowEnd + 1 (first uncached time)
+          switchSecond = Math.max(cache.windowEnd + 1, switchSecond);
+        }
+      }
+
+      const switchTime = switchSecond * 1000;
+
+      console.log(`Switch time: ${new Date(switchTime).toLocaleTimeString()} (${switchSecond - currentSecond}s from now)`);
+
+      // Store pending transition
+      pendingBaseTransition = {
+        baseBuffer: newBaseImageBuffer,
+        overlayStates: newOverlayStates,
+        switchTime: switchTime,
+        switchSecond: switchSecond
+      };
+
+      // Pre-render new clock frames starting at switch time
+      const clockOverlays = enabledOverlays.filter(o => o.type === 'clock');
+      for (const overlay of clockOverlays) {
+        const state = newOverlayStates.get(overlay.name);
+        if (!state) continue;
+
+        // Create new cache with new base, pre-render from switch time
+        const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.style);
+        await newCache.preRender(new Date(switchTime), newCache.windowSize);
+
+        // Store as pending (don't replace current cache yet)
+        if (!pendingBaseTransition.newCaches) {
+          pendingBaseTransition.newCaches = new Map();
+        }
+        pendingBaseTransition.newCaches.set(overlay.name, newCache);
+
+        console.log(`✓ Pre-rendered ${newCache.windowSize} frames for '${overlay.name}' starting at ${new Date(switchTime).toLocaleTimeString()}`);
+      }
 
       const duration = Date.now() - startTime;
-      console.log(`Base image updated in ${duration}ms`);
+      console.log(`New base prepared in ${duration}ms, will switch at ${new Date(switchTime).toLocaleTimeString()}`);
       stressMonitor.recordOperation('baseImage', duration, true);
       perfMonitor.end(perfOpId, { success: true });
     } catch (err) {
       const duration = Date.now() - startTime;
       console.error(`Error recapturing base image:`, err);
+      pendingBaseTransition = null; // Clear pending transition on error
       stressMonitor.recordOperation('baseImage', duration, false);
       perfMonitor.end(perfOpId, { success: false, error: err.message });
     } finally {
