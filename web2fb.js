@@ -58,8 +58,31 @@ const clockCaches = new Map(); // name -> ClockCache instance
 // Base image (persistent)
 let baseImageBuffer = null;
 
-// Page change transition state
-let pendingBaseTransition = null; // { baseBuffer, overlayStates, switchTime }
+/**
+ * Page change transition state - enables smooth transitions without freezing the clock
+ *
+ * When a page change is detected, we don't immediately replace the current base image.
+ * Instead, we prepare the new base in the background while the old cache continues
+ * serving frames. When the cache is about to run out, we perform an atomic swap.
+ *
+ * Flow:
+ * 1. Page change detected at T+3 (old cache has frames T+3→T+13)
+ * 2. recaptureBaseImage() prepares new base without disrupting current state:
+ *    - Screenshots new page
+ *    - Extracts new overlay regions
+ *    - Calculates switch time based on cache.windowEnd + 1 (e.g., T+22)
+ *    - Pre-renders new cache starting at switch time (T+22→T+32)
+ *    - Stores everything in pendingBaseTransition
+ * 3. Meanwhile, old cache continues extending (T+14→T+21) via normal updateOverlay loop
+ * 4. At T+22, updateOverlay() performs atomic swap:
+ *    - Replace baseImageBuffer, overlayStates, clockCaches
+ *    - Write full composited image to framebuffer
+ *    - Clear pendingBaseTransition
+ * 5. Clock never stops updating throughout the entire transition
+ *
+ * Structure: { baseBuffer, overlayStates, switchTime, switchSecond, newCaches }
+ */
+let pendingBaseTransition = null;
 
 // Buffer pool for reducing GC pressure (persistent)
 const bufferPool = {
@@ -767,23 +790,57 @@ async function initializeBrowserAndRun() {
     await cacheBaseRegions();
   }
 
-  // Pre-render clock frames BEFORE displaying page
-  // This eliminates the gap where page is visible but clock is not
+  /**
+   * Startup transition from splash screen to calendar
+   *
+   * Similar to page change transitions, we prepare everything while the splash
+   * screen remains visible, then smoothly transition to the calendar.
+   *
+   * Flow:
+   * 1. Splash screen is already visible (displayed before browser launch)
+   * 2. Browser launched, page loaded, overlays detected (background preparation)
+   * 3. Pre-render clock frames to populate cache
+   * 4. Brief pause to allow cache to grow via background extension
+   * 5. Composite overlays onto base and write to framebuffer
+   * 6. Start update intervals (cache continues extending automatically)
+   *
+   * Result: Smooth transition from splash to calendar with cache already populated
+   */
+  console.log('\n' + '='.repeat(60));
+  console.log('🎨 Preparing calendar display (splash screen visible)...');
+  console.log('='.repeat(60));
+
+  // Pre-render clock frames while splash screen is visible
+  // This populates the cache with 10 frames (default windowSize) before displaying
   console.log('Pre-rendering clock frames...');
   await preRenderClockFrames();
   perfMonitor.sampleMemory('after-clock-prerender');
+  console.log('✓ Cache populated, ready to display');
 
-  // Composite initial overlays onto base image, then write to framebuffer
-  // This prevents visible flash from writing base then immediately overwriting with overlays
-  console.log('Compositing initial overlays onto base image...');
+  // Composite initial overlays onto base image
+  console.log('Compositing overlays onto base image...');
   const compositedImage = await compositeOverlaysOntoBase(baseImageBuffer);
 
-  console.log('Writing composited image to framebuffer...');
+  // Smooth transition: write composited image to framebuffer
+  console.log('\n' + '='.repeat(60));
+  console.log('🔄 TRANSITIONING FROM SPLASH TO CALENDAR');
+  console.log('='.repeat(60));
   await writeToFramebuffer(compositedImage);
   perfMonitor.sampleMemory('after-initial-overlays');
-  console.log('Initial display complete (base + overlays)');
+  console.log('✓ Calendar displayed with pre-populated cache');
+  console.log('='.repeat(60) + '\n');
 
-  // Re-capture base image when page changes
+  /**
+   * Re-capture base image when page changes (smooth transition)
+   *
+   * This function prepares a new base image in the background WITHOUT disrupting
+   * the currently running clock overlays. The old cache continues serving frames
+   * while we prepare the new base.
+   *
+   * Key principle: Clock never stops during page changes
+   *
+   * @param {string} reason - Why the recapture was triggered (for logging)
+   */
   const recaptureBaseImage = async (reason) => {
     // Check if stress monitor allows this operation
     if (!stressMonitor.shouldAllowBaseImageRecapture()) {
