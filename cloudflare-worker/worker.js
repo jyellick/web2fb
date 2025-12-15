@@ -51,6 +51,7 @@ export default {
       const timeout = parseInt(url.searchParams.get('timeout') || '180000');
       const waitForImages = url.searchParams.get('waitForImages') !== 'false';
       const waitForSelector = url.searchParams.get('waitForSelector');
+      const hideSelectors = url.searchParams.get('hideSelectors')?.split(',').filter(Boolean) || [];
 
       if (!targetUrl) {
         return new Response('Missing url parameter', {
@@ -122,6 +123,14 @@ export default {
 
           await Promise.all([...imagePromises, ...bgPromises]);
         }, timeout);
+      }
+
+      // Hide overlay elements (for local rendering)
+      if (hideSelectors.length > 0) {
+        console.log(`Hiding ${hideSelectors.length} overlay element(s): ${hideSelectors.join(', ')}`);
+        await page.addStyleTag({
+          content: hideSelectors.map(selector => `${selector} { visibility: hidden !important; }`).join('\n')
+        });
       }
 
       // Capture screenshot

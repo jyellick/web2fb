@@ -27,7 +27,8 @@ async function fetchRemoteScreenshot(url, options = {}) {
     userAgent,
     timeout = 60000,
     waitForImages = true,
-    waitForSelector = null
+    waitForSelector = null,
+    hideSelectors = []
   } = options;
 
   if (!workerUrl) {
@@ -49,6 +50,10 @@ async function fetchRemoteScreenshot(url, options = {}) {
 
   if (waitForSelector) {
     params.set('waitForSelector', waitForSelector);
+  }
+
+  if (hideSelectors && hideSelectors.length > 0) {
+    params.set('hideSelectors', hideSelectors.join(','));
   }
 
   const requestUrl = `${workerUrl}?${params.toString()}`;
@@ -94,6 +99,11 @@ async function captureScreenshot(page, config) {
 
   if (mode === 'remote') {
     try {
+      // Collect overlay selectors to hide from remote screenshot
+      const hideSelectors = (config.overlays || [])
+        .filter(o => o.enabled !== false && o.selector)
+        .map(o => o.selector);
+
       // Use remote screenshot service
       const screenshotBuffer = await fetchRemoteScreenshot(config.display.url, {
         workerUrl: browserConfig.remoteScreenshotUrl,
@@ -102,7 +112,8 @@ async function captureScreenshot(page, config) {
         height: config.display.height || 1080,
         userAgent: browserConfig.userAgent,
         timeout: browserConfig.remoteTimeout || 60000,
-        waitForImages: config.performance?.waitForImages !== false
+        waitForImages: config.performance?.waitForImages !== false,
+        hideSelectors
       });
 
       return screenshotBuffer;
