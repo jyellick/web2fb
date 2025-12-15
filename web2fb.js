@@ -936,8 +936,17 @@ async function initializeBrowserAndRun() {
   const needsTemporaryBrowser = mode === 'remote' && !browserConfig.fallbackToLocal && hasOverlays;
 
   if (needsTemporaryBrowser) {
-    // Pure remote mode + overlays: Launch browser temporarily for detection
-    await launchBrowser(true);
+    // Pure remote mode + overlays: Try to launch browser temporarily for detection
+    console.log('⚠️  Warning: Overlay detection requires local browser on Pi Zero 2 W');
+    console.log('⚠️  This may fail due to resource constraints - will skip overlays if browser crashes');
+    try {
+      await launchBrowser(true);
+    } catch (err) {
+      console.warn('❌ Browser launch failed:', err.message);
+      console.warn('⏭️  Skipping overlay detection - continuing in pure remote mode without overlays');
+      browser = null;
+      page = null;
+    }
   } else {
     // Normal mode or remote with fallback
     await launchBrowser();
@@ -945,52 +954,65 @@ async function initializeBrowserAndRun() {
 
   // Skip browser page operations in pure remote mode (no local browser)
   if (page) {
-    // Load page
-    console.log(`Loading page: ${config.display.url}`);
-    const gotoOpId = perfMonitor.start('browser:pageLoad', { url: config.display.url });
-    await page.goto(config.display.url, {
-      waitUntil: 'load',
-      timeout: config.browser.timeout
-    });
-    perfMonitor.end(gotoOpId);
-    perfMonitor.sampleMemory('after-page-load');
-
-    // Scroll to load lazy images
-    if (config.performance.scrollToLoadLazy) {
-      console.log('Scrolling to trigger lazy loading...');
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      await page.evaluate(() => window.scrollTo(0, 0));
-    }
-
-    // Wait for images
-    if (config.performance.waitForImages) {
-      console.log('Waiting for images to load...');
-      const waitImagesOpId = perfMonitor.start('browser:waitForImages');
-      await page.waitForFunction(() => {
-        const images = Array.from(document.images);
-        return images.every(img => img.complete && img.naturalHeight !== 0);
-      }, { timeout: config.browser.imageLoadTimeout });
-      perfMonitor.end(waitImagesOpId);
-      perfMonitor.sampleMemory('after-images-loaded');
-      console.log('All images loaded');
-    }
-
-    // Disable animations
-    if (config.browser.disableAnimations) {
-      console.log('Disabling CSS animations...');
-      await page.addStyleTag({
-        content: `
-          *, *::before, *::after {
-            animation-duration: 0s !important;
-            animation-delay: 0s !important;
-            transition-duration: 0s !important;
-            transition-delay: 0s !important;
-            animation: none !important;
-            transition: none !important;
-          }
-        `
+    try {
+      // Load page
+      console.log(`Loading page: ${config.display.url}`);
+      const gotoOpId = perfMonitor.start('browser:pageLoad', { url: config.display.url });
+      await page.goto(config.display.url, {
+        waitUntil: 'load',
+        timeout: config.browser.timeout
       });
+      perfMonitor.end(gotoOpId);
+      perfMonitor.sampleMemory('after-page-load');
+
+      // Scroll to load lazy images
+      if (config.performance.scrollToLoadLazy) {
+        console.log('Scrolling to trigger lazy loading...');
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await page.evaluate(() => window.scrollTo(0, 0));
+      }
+
+      // Wait for images
+      if (config.performance.waitForImages) {
+        console.log('Waiting for images to load...');
+        const waitImagesOpId = perfMonitor.start('browser:waitForImages');
+        await page.waitForFunction(() => {
+          const images = Array.from(document.images);
+          return images.every(img => img.complete && img.naturalHeight !== 0);
+        }, { timeout: config.browser.imageLoadTimeout });
+        perfMonitor.end(waitImagesOpId);
+        perfMonitor.sampleMemory('after-images-loaded');
+        console.log('All images loaded');
+      }
+
+      // Disable animations
+      if (config.browser.disableAnimations) {
+        console.log('Disabling CSS animations...');
+        await page.addStyleTag({
+          content: `
+            *, *::before, *::after {
+              animation-duration: 0s !important;
+              animation-delay: 0s !important;
+              transition-duration: 0s !important;
+              transition-delay: 0s !important;
+              animation: none !important;
+              transition: none !important;
+            }
+          `
+        });
+      }
+    } catch (err) {
+      if (needsTemporaryBrowser) {
+        // Browser crashed during temporary detection - this is expected on Pi Zero 2 W
+        console.warn('❌ Browser crashed during page load (resource constrained)');
+        console.warn('⏭️  Skipping overlay detection - continuing in pure remote mode without overlays');
+        browser = null;
+        page = null;
+      } else {
+        // Unexpected error in normal mode
+        throw err;
+      }
     }
   } else {
     console.log('Pure remote mode - skipping browser page operations');
