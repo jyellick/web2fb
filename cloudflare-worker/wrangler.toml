@@ -16,7 +16,7 @@ browser = { binding = "BROWSER" }
 
 [env.production]
 name = "web2fb-screenshot"
-route = { pattern = "screenshot.yourdomain.com/*", zone_name = "yourdomain.com" }
+route = { pattern = "screenshot.unaddressable.org/*", zone_name = "unaddressable.org" }
 
 [env.development]
 name = "web2fb-screenshot-dev"

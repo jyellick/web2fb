@@ -13,6 +13,8 @@
  * Cost: ~$5 per million requests (~$0.11/month for typical usage)
  */
 
+import puppeteer from "@cloudflare/puppeteer";
+
 export default {
   async fetch(request, env) {
     // CORS headers for Pi requests

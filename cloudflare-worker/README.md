@@ -42,7 +42,18 @@ wrangler login
 
 This will open your browser to authenticate.
 
-### 3. Deploy the Worker
+### 3. Enable Browser Rendering
+
+Before deploying, you need to enable Browser Rendering in your Cloudflare account:
+
+1. Go to https://dash.cloudflare.com
+2. Navigate to Workers & Pages → Overview
+3. Click "Browser Rendering" in the left sidebar
+4. Click "Enable Browser Rendering" (if not already enabled)
+
+Note: Browser Rendering is available on Workers Paid plan ($5/month + usage).
+
+### 4. Deploy the Worker
 
 ```bash
 cd cloudflare-worker
@@ -57,7 +68,7 @@ You'll see output like:
 
 **Save this URL** - you'll need it for web2fb config.
 
-### 4. (Optional) Set API Key for Security
+### 5. (Optional) Set API Key for Security
 
 ```bash
 wrangler secret put API_KEY
@@ -67,7 +78,7 @@ Enter a random secure key (e.g., generate with `openssl rand -hex 32`).
 
 **Save this key** - you'll need it for web2fb config.
 
-### 5. (Optional) Enable Custom Domain
+### 6. (Optional) Enable Custom Domain
 
 If you have a Cloudflare-managed domain:
 
