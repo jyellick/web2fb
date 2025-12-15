@@ -656,6 +656,29 @@ async function launchBrowser() {
   perfMonitor.end(launchOpId);
   perfMonitor.sampleMemory('after-browser-launch');
 
+  // Set up browser crash detection
+  browser.on('disconnected', () => {
+    console.error('\n' + '!'.repeat(60));
+    console.error('🚨 CRITICAL: Browser process disconnected/crashed');
+    console.error('Framebuffer will freeze unless browser is restarted');
+    console.error('!'.repeat(60));
+
+    // Trigger restart via the recovery mechanism
+    // Set a flag to trigger restart on next recovery check
+    if (!browser || !page) {
+      console.error('Browser already null, scheduling restart...');
+      // Schedule restart after a brief delay
+      setTimeout(async () => {
+        try {
+          await restartBrowser('browser disconnected');
+        } catch (err) {
+          console.error('Failed to restart browser after disconnect:', err);
+          console.error('Manual intervention may be required');
+        }
+      }, 5000); // 5 second delay to avoid rapid restart loops
+    }
+  });
+
   // Set user agent if configured
   if (config.browser.userAgent) {
     await page.setUserAgent(config.browser.userAgent);
@@ -1113,6 +1136,39 @@ async function initializeBrowserAndRun() {
 
       recoveryCheckInProgress = true;
       try {
+        // Health check: verify browser is still responsive
+        if (browser && page) {
+          try {
+            // Simple health check: try to evaluate a basic expression
+            const healthCheckTimeout = 5000; // 5 seconds
+            await Promise.race([
+              page.evaluate(() => true),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
+              )
+            ]);
+          } catch (err) {
+            console.error('\n' + '!'.repeat(60));
+            console.error('🚨 CRITICAL: Browser health check failed');
+            console.error(`Error: ${err.message}`);
+            console.error('Browser may be unresponsive or crashed');
+            console.error('!'.repeat(60));
+
+            // Restart browser in-process
+            await restartBrowser('health check failed');
+            return;
+          }
+        } else {
+          console.error('\n' + '!'.repeat(60));
+          console.error('🚨 CRITICAL: Browser or page object is null');
+          console.error('Browser may have crashed without triggering disconnected event');
+          console.error('!'.repeat(60));
+
+          // Restart browser in-process
+          await restartBrowser('browser null');
+          return;
+        }
+
         // Check profile size
         const profileCheck = checkProfileSize(userDataDir, profileSizeThreshold);
 
