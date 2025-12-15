@@ -59,11 +59,6 @@
           "type": "string",
           "description": "API key for authenticating with remote screenshot service"
         },
-        "fallbackToLocal": {
-          "type": "boolean",
-          "description": "Fall back to local browser if remote screenshot service fails",
-          "default": true
-        },
         "remoteTimeout": {
           "type": "integer",
           "description": "Timeout for remote screenshot requests in milliseconds",
@@ -98,7 +93,7 @@
       "description": "Elements to hide and re-render locally for performance",
       "items": {
         "type": "object",
-        "required": ["name", "type", "selector"],
+        "required": ["name", "type", "selector", "region", "detectedStyle"],
         "properties": {
           "name": {
             "type": "string",
@@ -128,11 +123,6 @@
             "type": "object",
             "description": "Formatting options (varies by overlay type)"
           },
-          "detectStyle": {
-            "type": "boolean",
-            "description": "Auto-detect styling from original element",
-            "default": true
-          },
           "style": {
             "type": "object",
             "description": "Manual style overrides",
@@ -153,14 +143,10 @@
             "type": "string",
             "description": "Optional comment explaining this overlay"
           },
-          "manualConfig": {
-            "type": "boolean",
-            "description": "Skip browser-based detection and use pre-computed region/style (for Pi Zero 2 W)",
-            "default": false
-          },
           "region": {
             "type": "object",
-            "description": "Pre-computed overlay region (use tools/detect-overlays.js to generate)",
+            "description": "Overlay region (use tools/detect-overlays.js to generate)",
+            "required": ["x", "y", "width", "height"],
             "properties": {
               "x": {"type": "integer"},
               "y": {"type": "integer"},
@@ -170,7 +156,8 @@
           },
           "detectedStyle": {
             "type": "object",
-            "description": "Pre-computed style detected from page (use tools/detect-overlays.js to generate)",
+            "description": "Overlay style detected from page (use tools/detect-overlays.js to generate)",
+            "required": ["fontSize", "fontFamily", "color"],
             "properties": {
               "fontSize": {"type": "integer"},
               "fontFamily": {"type": "string"},
