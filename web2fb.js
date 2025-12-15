@@ -680,6 +680,22 @@ async function launchBrowser() {
   perfMonitor.end(launchOpId);
   perfMonitor.sampleMemory('after-browser-launch');
 
+  // Set browser process to lower priority (nice) to prioritize clock updates
+  // This ensures overlay updates aren't delayed by browser rendering
+  try {
+    const browserProcess = browser.process();
+    if (browserProcess && browserProcess.pid) {
+      const { execSync } = require('child_process');
+      // Set nice value to 10 (lower priority than default 0)
+      // Higher values = lower priority (range: -20 to 19)
+      execSync(`renice -n 10 -p ${browserProcess.pid}`, { stdio: 'ignore' });
+      console.log(`✓ Set browser process (PID ${browserProcess.pid}) to nice priority 10`);
+    }
+  } catch (err) {
+    console.warn(`Warning: Could not set browser process priority: ${err.message}`);
+    // Non-fatal - continue anyway
+  }
+
   // Set up browser crash detection
   browser.on('disconnected', () => {
     console.error('\n' + '!'.repeat(60));
@@ -1162,19 +1178,37 @@ async function initializeBrowserAndRun() {
       try {
         // Health check: verify browser is still responsive
         if (browser && page) {
-          try {
-            // Simple health check: try to evaluate a basic expression
-            const healthCheckTimeout = 5000; // 5 seconds
-            await Promise.race([
-              page.evaluate(() => true),
-              new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
-              )
-            ]);
-          } catch (err) {
+          // More lenient health check with retries to avoid false positives
+          // Pi Zero 2 W can be slow under load, give it room to breathe
+          const healthCheckTimeout = 15000; // 15 seconds (was 5s)
+          const maxRetries = 2; // Retry twice before declaring failure
+
+          let lastError = null;
+          for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+              await Promise.race([
+                page.evaluate(() => true),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
+                )
+              ]);
+              // Success - browser is responsive
+              lastError = null;
+              break;
+            } catch (err) {
+              lastError = err;
+              if (attempt < maxRetries) {
+                console.warn(`⚠️  Browser health check attempt ${attempt + 1}/${maxRetries + 1} failed, retrying...`);
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s before retry
+              }
+            }
+          }
+
+          // If all retries failed, restart browser
+          if (lastError) {
             console.error('\n' + '!'.repeat(60));
-            console.error('🚨 CRITICAL: Browser health check failed');
-            console.error(`Error: ${err.message}`);
+            console.error('🚨 CRITICAL: Browser health check failed after retries');
+            console.error(`Error: ${lastError.message}`);
             console.error('Browser may be unresponsive or crashed');
             console.error('!'.repeat(60));
 
