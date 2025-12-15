@@ -1230,8 +1230,8 @@ async function initializeBrowserAndRun() {
     }
   };
 
-  // Set up change detection
-  if (config.changeDetection.enabled) {
+  // Set up change detection (only if we have a browser page)
+  if (config.changeDetection.enabled && page) {
     await page.exposeFunction('onPageChange', async () => {
       // Guard: check if change detection is allowed under current stress
       if (!stressMonitor.shouldAllowChangeDetection()) {
@@ -1340,6 +1340,8 @@ async function initializeBrowserAndRun() {
 
       console.log(`Change detection active (periodic check: ${changeDetectionConfig.periodicCheckInterval}ms, debounce: ${changeDetectionConfig.debounceDelay || 500}ms)`);
     }, config.changeDetection);
+  } else if (config.changeDetection.enabled && !page) {
+    console.log('⚠️  Change detection disabled (no browser page available in remote mode)');
   }
 
   // Track in-progress updates per overlay (drop-frame behavior)
