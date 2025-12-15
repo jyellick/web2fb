@@ -619,111 +619,24 @@ function configureOverlays() {
   return enabledOverlays;
 }
 
-async function initializeBrowserAndRun() {
-  const browserConfig = config.browser || {};
-  const mode = browserConfig.mode || 'local';
+async function initializeAndRun() {
+  console.log('Initializing screenshot provider...');
+
+  // Create and initialize provider
+  screenshotProvider = createScreenshotProvider(config);
+  await screenshotProvider.initialize();
+
+  // Configure overlays from mandatory config metadata
+  configureOverlays();
+
+  // Collect selectors to hide from screenshots
   const enabledOverlays = getEnabledOverlays(config);
+  const hideSelectors = enabledOverlays.map(o => o.selector);
 
-  // Check if any overlays need browser-based detection
-  const overlaysNeedingDetection = enabledOverlays.filter(o => !o.manualConfig || !o.region || !o.detectedStyle);
-  const hasOverlaysNeedingDetection = overlaysNeedingDetection.length > 0;
-
-  // Determine if we need temporary browser for overlay detection
-  const needsTemporaryBrowser = mode === 'remote' && !browserConfig.fallbackToLocal && hasOverlaysNeedingDetection;
-
-  if (needsTemporaryBrowser) {
-    // Pure remote mode + overlays: Try to launch browser temporarily for detection
-    console.log('⚠️  Warning: Overlay detection requires local browser on Pi Zero 2 W');
-    console.log('⚠️  This may fail due to resource constraints - will skip overlays if browser crashes');
-    try {
-      await launchBrowser(true);
-    } catch (err) {
-      console.warn('❌ Browser launch failed:', err.message);
-      console.warn('⏭️  Skipping overlay detection - continuing in pure remote mode without overlays');
-      browser = null;
-      page = null;
-    }
-  } else {
-    // Normal mode or remote with fallback
-    await launchBrowser();
-  }
-
-  // Skip browser page operations in pure remote mode (no local browser)
-  if (page) {
-    try {
-      // Load page
-      console.log(`Loading page: ${config.display.url}`);
-      const gotoOpId = perfMonitor.start('browser:pageLoad', { url: config.display.url });
-      await page.goto(config.display.url, {
-        waitUntil: 'load',
-        timeout: config.browser.timeout
-      });
-      perfMonitor.end(gotoOpId);
-      perfMonitor.sampleMemory('after-page-load');
-
-      // Scroll to load lazy images
-      if (config.performance.scrollToLoadLazy) {
-        console.log('Scrolling to trigger lazy loading...');
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        await page.evaluate(() => window.scrollTo(0, 0));
-      }
-
-      // Wait for images
-      if (config.performance.waitForImages) {
-        console.log('Waiting for images to load...');
-        const waitImagesOpId = perfMonitor.start('browser:waitForImages');
-        await page.waitForFunction(() => {
-          const images = Array.from(document.images);
-          return images.every(img => img.complete && img.naturalHeight !== 0);
-        }, { timeout: config.browser.imageLoadTimeout });
-        perfMonitor.end(waitImagesOpId);
-        perfMonitor.sampleMemory('after-images-loaded');
-        console.log('All images loaded');
-      }
-
-      // Disable animations
-      if (config.browser.disableAnimations) {
-        console.log('Disabling CSS animations...');
-        await page.addStyleTag({
-          content: `
-            *, *::before, *::after {
-              animation-duration: 0s !important;
-              animation-delay: 0s !important;
-              transition-duration: 0s !important;
-              transition-delay: 0s !important;
-              animation: none !important;
-              transition: none !important;
-            }
-          `
-        });
-      }
-    } catch (err) {
-      if (needsTemporaryBrowser) {
-        // Browser crashed during temporary detection - this is expected on Pi Zero 2 W
-        console.warn('❌ Browser crashed during page load (resource constrained)');
-        console.warn('⏭️  Skipping overlay detection - continuing in pure remote mode without overlays');
-        browser = null;
-        page = null;
-      } else {
-        // Unexpected error in normal mode
-        throw err;
-      }
-    }
-  } else {
-    console.log('Pure remote mode - skipping browser page operations');
-  }
-
-  // Wait for rendering
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  // Detect and configure overlays
-  await detectAndConfigureOverlays();
-
-  // Capture base image
+  // Capture initial base image
   console.log('Capturing base image...');
-  const screenshotOpId = perfMonitor.start('browser:screenshot');
-  baseImageBuffer = await captureScreenshot(page, config);
+  const screenshotOpId = perfMonitor.start('screenshot:capture');
+  baseImageBuffer = await screenshotProvider.captureScreenshot(hideSelectors);
   perfMonitor.end(screenshotOpId, { bufferSize: baseImageBuffer.length });
   perfMonitor.sampleMemory('after-base-screenshot');
   console.log('Base image captured');
@@ -734,37 +647,14 @@ async function initializeBrowserAndRun() {
     await cacheBaseRegions();
   }
 
-  // Close temporary browser after overlay detection and initial capture
-  if (needsTemporaryBrowser && browser) {
-    console.log('Closing temporary browser (overlay detection complete)...');
-    await browser.close();
-    browser = null;
-    page = null;
-    console.log('✓ Browser closed - now operating in pure remote mode');
-  }
-
   /**
    * Startup transition from splash screen to calendar
-   *
-   * Similar to page change transitions, we prepare everything while the splash
-   * screen remains visible, then smoothly transition to the calendar.
-   *
-   * Flow:
-   * 1. Splash screen is already visible (displayed before browser launch)
-   * 2. Browser launched, page loaded, overlays detected (background preparation)
-   * 3. Pre-render clock frames to populate cache
-   * 4. Brief pause to allow cache to grow via background extension
-   * 5. Composite overlays onto base and write to framebuffer
-   * 6. Start update intervals (cache continues extending automatically)
-   *
-   * Result: Smooth transition from splash to calendar with cache already populated
    */
   console.log('\n' + '='.repeat(60));
   console.log('🎨 Preparing calendar display (splash screen visible)...');
   console.log('='.repeat(60));
 
-  // Pre-render clock frames while splash screen is visible
-  // This populates the cache with 10 frames (default windowSize) before displaying
+  // Pre-render clock frames
   console.log('Pre-rendering clock frames...');
   await preRenderClockFrames();
   perfMonitor.sampleMemory('after-clock-prerender');
@@ -785,14 +675,6 @@ async function initializeBrowserAndRun() {
 
   /**
    * Re-capture base image when page changes (smooth transition)
-   *
-   * This function prepares a new base image in the background WITHOUT disrupting
-   * the currently running clock overlays. The old cache continues serving frames
-   * while we prepare the new base.
-   *
-   * Key principle: Clock never stops during page changes
-   *
-   * @param {string} reason - Why the recapture was triggered (for logging)
    */
   const recaptureBaseImage = async (reason) => {
     // Check if stress monitor allows this operation
@@ -810,207 +692,118 @@ async function initializeBrowserAndRun() {
 
       // Screenshot new page
       const screenshotOpId = perfMonitor.start('baseImage:screenshot');
-      const newBaseImageBuffer = await captureScreenshot(page, config);
+      const newBaseImageBuffer = await screenshotProvider.captureScreenshot(hideSelectors);
       perfMonitor.end(screenshotOpId, { bufferSize: newBaseImageBuffer.length });
 
       // Extract new base regions (but don't replace current ones yet)
       const newOverlayStates = new Map();
-      const enabledOverlays = getEnabledOverlays(config);
 
       for (const overlay of enabledOverlays) {
-        if (!overlay.selector) continue;
+        if (!overlay.region) continue;
 
-        const state = await detectOverlayRegion(page, overlay);
-        if (state) {
-          // Extract base region from new screenshot
-          const baseRegionBuffer = await sharp(newBaseImageBuffer)
-            .extract({
-              left: state.region.x,
-              top: state.region.y,
-              width: state.region.width,
-              height: state.region.height
-            })
-            .png()
-            .toBuffer();
+        const extractOpId = perfMonitor.start('baseImage:extractRegion', { name: overlay.name });
 
-          newOverlayStates.set(overlay.name, {
-            ...state,
-            baseRegionBuffer
-          });
-        }
+        // Extract base region for this overlay
+        const baseRegionBuffer = await sharp(newBaseImageBuffer)
+          .extract({
+            left: overlay.region.x,
+            top: overlay.region.y,
+            width: overlay.region.width,
+            height: overlay.region.height
+          })
+          .raw()
+          .toBuffer();
+
+        newOverlayStates.set(overlay.name, {
+          overlay,
+          region: overlay.region,
+          detectedStyle: overlay.detectedStyle,
+          baseRegionBuffer
+        });
+
+        perfMonitor.end(extractOpId);
       }
 
-      // Calculate switch time: when current cache will run out
-      const currentTime = Date.now();
-      const currentSecond = Math.floor(currentTime / 1000);
+      // Schedule transition at next second boundary for smooth clock update
+      const now = Date.now();
+      const msUntilNextSecond = 1000 - (now % 1000);
+      const switchTime = now + msUntilNextSecond;
 
-      // Find the earliest cache end time
-      let switchSecond = currentSecond + 10; // Default to 10s from now
-      for (const cache of clockCaches.values()) {
-        if (cache.isValid() && cache.windowEnd) {
-          // Switch at windowEnd + 1 (first uncached time)
-          switchSecond = Math.max(cache.windowEnd + 1, switchSecond);
-        }
-      }
-
-      const switchTime = switchSecond * 1000;
-
-      console.log(`Switch time: ${new Date(switchTime).toLocaleTimeString()} (${switchSecond - currentSecond}s from now)`);
+      console.log(`Scheduling transition in ${msUntilNextSecond}ms (at second boundary)...`);
 
       // Store pending transition
       pendingBaseTransition = {
-        baseBuffer: newBaseImageBuffer,
-        overlayStates: newOverlayStates,
-        switchTime: switchTime,
-        switchSecond: switchSecond
+        switchTime,
+        newBaseImageBuffer,
+        newOverlayStates,
+        newCaches: null
       };
 
-      // Pre-render new clock frames starting at switch time
+      // Pre-render clock caches for new base (in background)
       const clockOverlays = enabledOverlays.filter(o => o.type === 'clock');
-      for (const overlay of clockOverlays) {
-        const state = newOverlayStates.get(overlay.name);
-        if (!state) continue;
+      if (clockOverlays.length > 0) {
+        const cacheOpId = perfMonitor.start('baseImage:prerenderClocks', { count: clockOverlays.length });
 
-        // Create new cache with new base, pre-render from switch time
-        const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.detectedStyle);
-        await newCache.preRender(new Date(switchTime), newCache.windowSize);
+        pendingBaseTransition.newCaches = new Map();
 
-        // Store as pending (don't replace current cache yet)
-        if (!pendingBaseTransition.newCaches) {
-          pendingBaseTransition.newCaches = new Map();
+        for (const overlay of clockOverlays) {
+          const state = newOverlayStates.get(overlay.name);
+          if (!state) continue;
+
+          // Create new cache with new base, pre-render from switch time
+          const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.detectedStyle);
+          await newCache.preRender(new Date(switchTime), newCache.windowSize);
+
+          // Store as pending (don't replace current cache yet)
+          pendingBaseTransition.newCaches.set(overlay.name, newCache);
         }
-        pendingBaseTransition.newCaches.set(overlay.name, newCache);
 
-        console.log(`✓ Pre-rendered ${newCache.windowSize} frames for '${overlay.name}' starting at ${new Date(switchTime).toLocaleTimeString()}`);
+        perfMonitor.end(cacheOpId);
       }
 
       const duration = Date.now() - startTime;
-      console.log(`New base prepared in ${duration}ms, will switch at ${new Date(switchTime).toLocaleTimeString()}`);
-      stressMonitor.recordOperation('baseImage', duration, true);
-      perfMonitor.end(perfOpId, { success: true });
+      perfMonitor.end(perfOpId, { success: true, duration });
+      stressMonitor.recordOperation('baseImage', duration);
+      console.log(`✓ Base image recaptured in ${duration}ms, transition scheduled`);
+
     } catch (err) {
       const duration = Date.now() - startTime;
-      console.error(`Error recapturing base image:`, err);
-      pendingBaseTransition = null; // Clear pending transition on error
-      stressMonitor.recordOperation('baseImage', duration, false);
-      perfMonitor.end(perfOpId, { success: false, error: err.message });
+      perfMonitor.end(perfOpId, { success: false, error: err.message, duration });
+      stressMonitor.recordOperation('baseImage', duration);
+      console.error(`Base image recapture failed after ${duration}ms:`, err.message);
+
+      // Clear pending transition
+      pendingBaseTransition = null;
+
     } finally {
       stressMonitor.endBaseImageOperation();
     }
   };
 
-  // Set up change detection (only if we have a browser page)
-  if (config.changeDetection.enabled && page) {
-    await page.exposeFunction('onPageChange', async () => {
-      // Guard: check if change detection is allowed under current stress
-      if (!stressMonitor.shouldAllowChangeDetection()) {
-        return;
-      }
-
-      stressMonitor.startChangeDetection();
-      try {
-        console.log('Page change detected');
-        await recaptureBaseImage('page changed');
-      } finally {
-        stressMonitor.endChangeDetection();
-      }
-    });
-
-    await page.evaluate((changeDetectionConfig) => {
-      let lastSnapshot = '';
-      let debounceTimer = null;
-      let periodicCheckInterval = null;
-
-      function captureSnapshot() {
-        const elements = document.querySelectorAll(changeDetectionConfig.watchSelectors.join(','));
-        // Limit to first 100 elements to prevent unbounded memory growth
-        const limitedElements = Array.from(elements).slice(0, 100);
-        const data = limitedElements.map(el => ({
-          tag: el.tagName,
-          src: el.src || '',
-          style: el.getAttribute('style') || '',
-          class: el.className || ''
-        }));
-        const snapshot = JSON.stringify(data);
-        // Truncate if snapshot exceeds 100KB
-        return snapshot.length > 102400 ? snapshot.slice(0, 102400) : snapshot;
-      }
-
-      function startPeriodicCheck() {
-        // Clear existing interval if any
-        if (periodicCheckInterval) {
-          clearInterval(periodicCheckInterval);
+  // Set up change detection (only if provider supports it)
+  if (screenshotProvider.supportsChangeDetection()) {
+    const changeDetectionConfig = config.changeDetection || {};
+    if (changeDetectionConfig.enabled) {
+      await screenshotProvider.setupChangeDetection(async () => {
+        // Guard: check if change detection is allowed under current stress
+        if (!stressMonitor.shouldAllowChangeDetection()) {
+          return;
         }
 
-        // Start new interval
-        periodicCheckInterval = setInterval(() => {
-          const currentSnapshot = captureSnapshot();
-          if (currentSnapshot !== lastSnapshot) {
-            console.log('Periodic check detected change');
-            triggerChange();
-          }
-        }, changeDetectionConfig.periodicCheckInterval);
-      }
-
-      function triggerChange() {
-        // Debounce change notifications
-        if (debounceTimer) {
-          clearTimeout(debounceTimer);
-        }
-
-        debounceTimer = setTimeout(() => {
-          const currentSnapshot = captureSnapshot();
-          if (currentSnapshot !== lastSnapshot) {
-            console.log('Change detected, triggering update');
-            lastSnapshot = currentSnapshot;
-            window.onPageChange();
-
-            // Reset periodic check timer since we just updated
-            startPeriodicCheck();
-          }
-          debounceTimer = null;
-        }, changeDetectionConfig.debounceDelay || 500);
-      }
-
-      lastSnapshot = captureSnapshot();
-      console.log('Change detection initialized with debouncing:', changeDetectionConfig.debounceDelay || 500, 'ms');
-
-      const observer = new MutationObserver((mutations) => {
-        let shouldCheck = false;
-
-        for (const mutation of mutations) {
-          if (mutation.type === 'attributes') {
-            const attrName = mutation.attributeName;
-            if (changeDetectionConfig.watchAttributes.includes(attrName)) {
-              shouldCheck = true;
-              break;
-            }
-          }
-          if (mutation.type === 'childList') {
-            shouldCheck = true;
-            break;
-          }
-        }
-
-        if (shouldCheck) {
-          triggerChange();
+        stressMonitor.startChangeDetection();
+        try {
+          console.log('Page change detected');
+          await recaptureBaseImage('page changed');
+        } finally {
+          stressMonitor.endChangeDetection();
         }
       });
-
-      observer.observe(document.body, {
-        attributes: true,
-        attributeFilter: changeDetectionConfig.watchAttributes,
-        childList: true,
-        subtree: true
-      });
-
-      // Start periodic check
-      startPeriodicCheck();
-
-      console.log(`Change detection active (periodic check: ${changeDetectionConfig.periodicCheckInterval}ms, debounce: ${changeDetectionConfig.debounceDelay || 500}ms)`);
-    }, config.changeDetection);
-  } else if (config.changeDetection.enabled && !page) {
-    console.log('⚠️  Change detection disabled (no browser page available in remote mode)');
+    }
+  } else {
+    const changeDetectionConfig = config.changeDetection || {};
+    if (changeDetectionConfig.enabled) {
+      console.log('⚠️  Change detection disabled (not supported by screenshot provider)');
+    }
   }
 
   // Track in-progress updates per overlay (drop-frame behavior)
@@ -1019,23 +812,65 @@ async function initializeBrowserAndRun() {
   // Start overlay update loops
   if (overlayStates.size > 0) {
     for (const overlay of enabledOverlays) {
-      if (!overlayStates.has(overlay.name)) continue;
+      if (!overlayStates.has(overlay.name)) {
+        continue;
+      }
 
+      overlayUpdateInProgress.set(overlay.name, false);
       const updateInterval = overlay.updateInterval || 1000;
 
       console.log(`Starting overlay '${overlay.name}' update loop (${updateInterval}ms)`);
 
-      // Initialize in-progress flag for this overlay
-      overlayUpdateInProgress.set(overlay.name, false);
-
-      const intervalId = setInterval(async () => {
-        // Drop-frame: skip if previous update still in progress
+      // Overlay update function
+      const updateOverlay = async (overlay) => {
+        // Drop-frame: skip if update already in progress
         if (overlayUpdateInProgress.get(overlay.name)) {
-          console.log(`⏭️  Dropping frame for overlay '${overlay.name}' - previous update still in progress`);
           return;
         }
 
         overlayUpdateInProgress.set(overlay.name, true);
+
+        try {
+          const state = overlayStates.get(overlay.name);
+          if (!state || !state.baseRegionBuffer) {
+            return;
+          }
+
+          // Perform base transition if pending and time has arrived
+          if (pendingBaseTransition && Date.now() >= pendingBaseTransition.switchTime) {
+            console.log('\n🔄 Executing base image transition...');
+
+            // Atomic swap: replace base image and overlay states
+            baseImageBuffer = pendingBaseTransition.newBaseImageBuffer;
+
+            // Replace overlay states
+            for (const [name, newState] of pendingBaseTransition.newOverlayStates.entries()) {
+              overlayStates.set(name, newState);
+            }
+
+            // Replace clock caches
+            if (pendingBaseTransition.newCaches) {
+              for (const [name, newCache] of pendingBaseTransition.newCaches.entries()) {
+                clockCaches.set(name, newCache);
+              }
+            }
+
+            console.log('✓ Base image transition complete - all overlays now use new base');
+            pendingBaseTransition = null;
+          }
+
+          // Update overlay on framebuffer
+          await updateOverlayOnFramebuffer(overlay, overlayStates.get(overlay.name));
+
+        } catch (err) {
+          console.error(`Error updating overlay '${overlay.name}':`, err.message);
+        } finally {
+          overlayUpdateInProgress.set(overlay.name, false);
+        }
+      };
+
+      // Set up interval for this overlay
+      const intervalId = setInterval(async () => {
         try {
           await updateOverlay(overlay);
         } finally {
@@ -1047,12 +882,13 @@ async function initializeBrowserAndRun() {
     }
   }
 
-  // Recovery monitoring - check for severe stress and profile size
-  let recoveryCheckInProgress = false; // Drop-frame behavior for recovery checks
-  if (stressMonitor.config.enabled) {
+  // Recovery monitoring (only for local mode with browser)
+  let recoveryCheckInProgress = false;
+  if (stressMonitor.config.enabled && screenshotProvider.getType() === 'local') {
     const recoveryCheckInterval = stressMonitor.config.recovery.recoveryCheckInterval;
     const profileSizeThresholdMB = stressMonitor.config.recovery.profileSizeThresholdMB || 40;
     const profileSizeThreshold = profileSizeThresholdMB * 1024 * 1024;
+
     console.log(`Stress monitoring enabled (recovery check: ${recoveryCheckInterval}ms)`);
     console.log(`Profile size monitoring: ${formatBytes(profileSizeThreshold)} threshold`);
 
@@ -1065,19 +901,17 @@ async function initializeBrowserAndRun() {
 
       recoveryCheckInProgress = true;
       try {
-        // Skip health check in remote mode without browser
-        const browserConfig = config.browser || {};
-        const mode = browserConfig.mode || 'local';
-        const inRemoteModeWithoutBrowser = mode === 'remote' && !browserConfig.fallbackToLocal;
+        const localProvider = screenshotProvider;
 
-        // Health check: verify browser is still responsive
+        // Health check: verify browser is responsive
+        const browser = localProvider.getBrowser();
+        const page = localProvider.getPage();
+
         if (browser && page) {
-          // More lenient health check with retries to avoid false positives
-          // Pi Zero 2 W can be slow under load, give it room to breathe
-          const healthCheckTimeout = 15000; // 15 seconds (was 5s)
-          const maxRetries = 2; // Retry twice before declaring failure
-
+          const healthCheckTimeout = 15000;
+          const maxRetries = 2;
           let lastError = null;
+
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
               await Promise.race([
@@ -1086,56 +920,38 @@ async function initializeBrowserAndRun() {
                   setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
                 )
               ]);
-              // Success - browser is responsive
               lastError = null;
               break;
             } catch (err) {
               lastError = err;
               if (attempt < maxRetries) {
                 console.warn(`⚠️  Browser health check attempt ${attempt + 1}/${maxRetries + 1} failed, retrying...`);
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s before retry
+                await new Promise(resolve => setTimeout(resolve, 2000));
               }
             }
           }
 
-          // If all retries failed, restart browser
           if (lastError) {
             console.error('\n' + '!'.repeat(60));
             console.error('🚨 CRITICAL: Browser health check failed after retries');
             console.error(`Error: ${lastError.message}`);
-            console.error('Browser may be unresponsive or crashed');
             console.error('!'.repeat(60));
-
-            // Restart browser in-process
-            await restartBrowser('health check failed');
+            await restartProvider('health check failed');
             return;
           }
-        } else if (!inRemoteModeWithoutBrowser) {
-          // Only treat null browser as error if we're NOT in remote mode
-          console.error('\n' + '!'.repeat(60));
-          console.error('🚨 CRITICAL: Browser or page object is null');
-          console.error('Browser may have crashed without triggering disconnected event');
-          console.error('!'.repeat(60));
-
-          // Restart browser in-process
-          await restartBrowser('browser null');
-          return;
         }
-        // If in remote mode without browser, null is expected - continue
 
-        // Check profile size (only if browser is running)
-        if (browser && userDataDir) {
+        // Check profile size
+        const userDataDir = localProvider.getUserDataDir();
+        if (userDataDir) {
           const profileCheck = checkProfileSize(userDataDir, profileSizeThreshold);
 
           if (profileCheck.exceeds) {
-          console.error('\n' + '!'.repeat(60));
-          console.error('🚨 CRITICAL: Chrome profile too large');
-          console.error(`Profile size: ${profileCheck.sizeFormatted} (threshold: ${profileCheck.thresholdFormatted})`);
-          console.error('Large profile in tmpfs consumes RAM on Pi!');
-          console.error('!'.repeat(60));
-
-            // Restart browser in-process
-            await restartBrowser('profile too large');
+            console.error('\n' + '!'.repeat(60));
+            console.error('🚨 CRITICAL: Chrome profile too large');
+            console.error(`Profile size: ${profileCheck.sizeFormatted} (threshold: ${profileCheck.thresholdFormatted})`);
+            console.error('!'.repeat(60));
+            await restartProvider('profile too large');
             return;
           }
         }
@@ -1145,11 +961,11 @@ async function initializeBrowserAndRun() {
           console.error('\n' + '!'.repeat(60));
           console.error('🚨 CRITICAL: System under severe stress');
           console.error('!'.repeat(60));
-
-          // Restart browser in-process
-          await restartBrowser('severe stress');
-          return;
+          await restartProvider('severe stress');
         }
+
+      } catch (err) {
+        console.error('Recovery check error:', err.message);
       } finally {
         recoveryCheckInProgress = false;
       }
@@ -1162,28 +978,30 @@ async function initializeBrowserAndRun() {
   if (perfMonitor.config.enabled && perfMonitor.config.reportInterval > 0) {
     console.log(`Performance reporting enabled (interval: ${perfMonitor.config.reportInterval}ms)`);
     const reportIntervalId = setInterval(() => {
-      console.log('\n[DEBUG] Performance report interval triggered');
       perfMonitor.sampleMemory('periodic-sample');
       perfMonitor.printReport();
-      console.log('[DEBUG] Performance report complete\n');
     }, perfMonitor.config.reportInterval);
     intervals.push(reportIntervalId);
   }
 
+  // Log running status
   console.log('='.repeat(60));
   console.log(`web2fb is running (${gitCommit}). Press Ctrl+C to stop.`);
+
   if (stressMonitor.config.enabled) {
     console.log('Stress monitoring: ENABLED');
     console.log(`  - Overlay update critical threshold: ${stressMonitor.config.thresholds.overlayUpdateCritical}ms`);
     console.log(`  - Base image critical threshold: ${stressMonitor.config.thresholds.baseImageCritical}ms`);
-    console.log(`  - Browser restart after ${stressMonitor.config.recovery.killBrowserThreshold} critical events`);
-    console.log(`  - Critical events decay on successful operations`);
+    console.log(`  - Provider restart after ${stressMonitor.config.recovery.killBrowserThreshold} critical events`);
+    console.log('  - Critical events decay on successful operations');
   }
+
   if (perfMonitor.config.enabled) {
     console.log('Performance monitoring: ENABLED');
     if (perfMonitor.config.verbose) console.log('  - Verbose logging: ON');
     if (perfMonitor.config.logToFile) console.log(`  - Logging to file: ${perfMonitor.config.logToFile}`);
   }
+
   console.log('='.repeat(60));
 }
 
@@ -1208,7 +1026,7 @@ async function initializeBrowserAndRun() {
   perfMonitor.end(initOpId);
 
   // Initialize browser and start main loop
-  await initializeBrowserAndRun();
+  await initializeAndRun();
 
   // Cleanup on exit
   const shutdown = () => {
