@@ -925,52 +925,57 @@ async function detectAndConfigureOverlays() {
 async function initializeBrowserAndRun() {
   await launchBrowser();
 
-  // Load page
-  console.log(`Loading page: ${config.display.url}`);
-  const gotoOpId = perfMonitor.start('browser:pageLoad', { url: config.display.url });
-  await page.goto(config.display.url, {
-    waitUntil: 'load',
-    timeout: config.browser.timeout
-  });
-  perfMonitor.end(gotoOpId);
-  perfMonitor.sampleMemory('after-page-load');
-
-  // Scroll to load lazy images
-  if (config.performance.scrollToLoadLazy) {
-    console.log('Scrolling to trigger lazy loading...');
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    await page.evaluate(() => window.scrollTo(0, 0));
-  }
-
-  // Wait for images
-  if (config.performance.waitForImages) {
-    console.log('Waiting for images to load...');
-    const waitImagesOpId = perfMonitor.start('browser:waitForImages');
-    await page.waitForFunction(() => {
-      const images = Array.from(document.images);
-      return images.every(img => img.complete && img.naturalHeight !== 0);
-    }, { timeout: config.browser.imageLoadTimeout });
-    perfMonitor.end(waitImagesOpId);
-    perfMonitor.sampleMemory('after-images-loaded');
-    console.log('All images loaded');
-  }
-
-  // Disable animations
-  if (config.browser.disableAnimations) {
-    console.log('Disabling CSS animations...');
-    await page.addStyleTag({
-      content: `
-        *, *::before, *::after {
-          animation-duration: 0s !important;
-          animation-delay: 0s !important;
-          transition-duration: 0s !important;
-          transition-delay: 0s !important;
-          animation: none !important;
-          transition: none !important;
-        }
-      `
+  // Skip browser page operations in pure remote mode (no local browser)
+  if (page) {
+    // Load page
+    console.log(`Loading page: ${config.display.url}`);
+    const gotoOpId = perfMonitor.start('browser:pageLoad', { url: config.display.url });
+    await page.goto(config.display.url, {
+      waitUntil: 'load',
+      timeout: config.browser.timeout
     });
+    perfMonitor.end(gotoOpId);
+    perfMonitor.sampleMemory('after-page-load');
+
+    // Scroll to load lazy images
+    if (config.performance.scrollToLoadLazy) {
+      console.log('Scrolling to trigger lazy loading...');
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await page.evaluate(() => window.scrollTo(0, 0));
+    }
+
+    // Wait for images
+    if (config.performance.waitForImages) {
+      console.log('Waiting for images to load...');
+      const waitImagesOpId = perfMonitor.start('browser:waitForImages');
+      await page.waitForFunction(() => {
+        const images = Array.from(document.images);
+        return images.every(img => img.complete && img.naturalHeight !== 0);
+      }, { timeout: config.browser.imageLoadTimeout });
+      perfMonitor.end(waitImagesOpId);
+      perfMonitor.sampleMemory('after-images-loaded');
+      console.log('All images loaded');
+    }
+
+    // Disable animations
+    if (config.browser.disableAnimations) {
+      console.log('Disabling CSS animations...');
+      await page.addStyleTag({
+        content: `
+          *, *::before, *::after {
+            animation-duration: 0s !important;
+            animation-delay: 0s !important;
+            transition-duration: 0s !important;
+            transition-delay: 0s !important;
+            animation: none !important;
+            transition: none !important;
+          }
+        `
+      });
+    }
+  } else {
+    console.log('Pure remote mode - skipping browser page operations');
   }
 
   // Wait for rendering
