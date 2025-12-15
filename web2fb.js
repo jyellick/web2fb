@@ -386,7 +386,19 @@ async function compositeOverlaysOntoBase(baseBuffer) {
     if (overlay.type === 'clock') {
       const cache = clockCaches.get(overlay.name);
       if (cache && cache.isValid()) {
-        overlayImage = cache.getFrame();
+        const cachedFrame = cache.getFrame();
+        if (cachedFrame) {
+          // Convert raw buffer to PNG for compositing
+          overlayImage = await sharp(cachedFrame.buffer, {
+            raw: {
+              width: cachedFrame.width,
+              height: cachedFrame.height,
+              channels: cachedFrame.channels
+            }
+          })
+            .png()
+            .toBuffer();
+        }
       }
     }
 
@@ -480,7 +492,19 @@ async function updateOverlay(overlay) {
         if (cache.isValid()) {
           // Use pre-rendered frame - no generation or compositing needed!
           const fetchOpId = perfMonitor.start('clock:fetchFrame', { name: overlay.name });
-          compositeImage = cache.getFrame();
+          const cachedFrame = cache.getFrame();
+          if (cachedFrame) {
+            // Convert raw buffer to PNG for framebuffer write
+            compositeImage = await sharp(cachedFrame.buffer, {
+              raw: {
+                width: cachedFrame.width,
+                height: cachedFrame.height,
+                channels: cachedFrame.channels
+              }
+            })
+              .png()
+              .toBuffer();
+          }
           perfMonitor.end(fetchOpId);
         }
       }

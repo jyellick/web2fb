@@ -89,7 +89,12 @@ describe('ClockCache', () => {
       for (let i = 0; i < cache.windowSize; i++) {
         const frameSecond = startSecond + i;
         expect(cache.frames.has(frameSecond)).toBe(true);
-        expect(Buffer.isBuffer(cache.frames.get(frameSecond))).toBe(true);
+        const frame = cache.frames.get(frameSecond);
+        expect(frame).toHaveProperty('buffer');
+        expect(frame).toHaveProperty('width');
+        expect(frame).toHaveProperty('height');
+        expect(frame).toHaveProperty('channels');
+        expect(Buffer.isBuffer(frame.buffer)).toBe(true);
       }
     });
 
@@ -180,7 +185,8 @@ describe('ClockCache', () => {
       const frame = cache.getFrame();
 
       expect(frame).not.toBe(null);
-      expect(Buffer.isBuffer(frame)).toBe(true);
+      expect(frame).toHaveProperty('buffer');
+      expect(Buffer.isBuffer(frame.buffer)).toBe(true);
     });
 
     it('should return null if requested time is outside window', async () => {
