@@ -457,12 +457,12 @@ async function preRenderClockFrames() {
       let cache = clockCaches.get(overlay.name);
       if (!cache) {
         // Pass detected style so pre-rendered frames match live appearance
-        cache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.style);
+        cache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.detectedStyle);
         clockCaches.set(overlay.name, cache);
       } else {
         cache.updateBaseRegion(state.baseRegionBuffer);
         // Update detected style in case it changed
-        cache.detectedStyle = state.style;
+        cache.detectedStyle = state.detectedStyle;
       }
 
       // Pre-render initial frames
@@ -498,7 +498,7 @@ async function compositeOverlaysOntoBase(baseBuffer) {
     // Merge detected style with overlay style
     const mergedOverlay = {
       ...overlay,
-      style: { ...state.style, ...overlay.style }
+      style: { ...state.detectedStyle, ...overlay.style }
     };
 
     let overlayImage;
@@ -595,7 +595,7 @@ async function updateOverlay(overlay) {
     const { region } = state;
 
     // Merge detected style with overlay style
-    overlay.style = { ...state.style, ...overlay.style };
+    overlay.style = { ...state.detectedStyle, ...overlay.style };
 
     let compositeImage;
 
@@ -887,20 +887,44 @@ async function detectAndConfigureOverlays() {
     return enabledOverlays;
   }
 
-  // Overlays require a browser page for detection
-  if (!page) {
-    console.warn('⚠️  Overlays are configured but browser is not available (remote mode without fallback)');
-    console.warn('⚠️  Overlays will be skipped. To use overlays, set browser.fallbackToLocal = true');
-    return [];
+  // Check if all overlays have manual configuration
+  // Debug: Check each overlay's manual config status
+  for (const o of enabledOverlays) {
+    console.log(`Overlay '${o.name}': manualConfig=${o.manualConfig}, hasRegion=${!!o.region}, hasDetectedStyle=${!!o.detectedStyle}`);
   }
 
-  console.log(`Detecting ${enabledOverlays.length} overlay(s)...`);
+  const manualOverlays = enabledOverlays.filter(o => o.manualConfig && o.region && o.detectedStyle);
+  const needsDetection = enabledOverlays.filter(o => !o.manualConfig || !o.region || !o.detectedStyle);
 
-  // Clear existing overlay states on restart
-  overlayStates.clear();
+  // Use manual configuration if provided (no browser needed!)
+  if (manualOverlays.length > 0) {
+    console.log(`Using manual configuration for ${manualOverlays.length} overlay(s) (no browser detection needed)`);
+    for (const overlay of manualOverlays) {
+      overlayStates.set(overlay.name, {
+        overlay,
+        region: overlay.region,
+        detectedStyle: overlay.detectedStyle || {}
+      });
+      console.log(`✓ Overlay '${overlay.name}' configured from manual data: (${overlay.region.x}, ${overlay.region.y}), size: ${overlay.region.width}x${overlay.region.height}`);
+    }
+  }
 
-  const detectAllOpId = perfMonitor.start('overlay:detectAll', { count: enabledOverlays.length });
-  for (const overlay of enabledOverlays) {
+  // Skip browser detection if no overlays need it
+  if (needsDetection.length === 0) {
+    return enabledOverlays;
+  }
+
+  // Overlays require a browser page for detection
+  if (!page) {
+    console.warn(`⚠️  ${needsDetection.length} overlay(s) need browser detection but browser is not available`);
+    console.warn('⚠️  Use tools/detect-overlays.js on a powerful machine to generate manual config');
+    return manualOverlays;
+  }
+
+  console.log(`Detecting ${needsDetection.length} overlay(s) using browser...`);
+
+  const detectAllOpId = perfMonitor.start('overlay:detectAll', { count: needsDetection.length });
+  for (const overlay of needsDetection) {
     const detectOpId = perfMonitor.start('overlay:detectRegion', { name: overlay.name, selector: overlay.selector });
     const detected = await detectOverlayRegion(page, overlay);
     perfMonitor.end(detectOpId, { found: !!detected });
@@ -930,10 +954,13 @@ async function initializeBrowserAndRun() {
   const browserConfig = config.browser || {};
   const mode = browserConfig.mode || 'local';
   const enabledOverlays = getEnabledOverlays(config);
-  const hasOverlays = enabledOverlays.length > 0;
+
+  // Check if any overlays need browser-based detection
+  const overlaysNeedingDetection = enabledOverlays.filter(o => !o.manualConfig || !o.region || !o.detectedStyle);
+  const hasOverlaysNeedingDetection = overlaysNeedingDetection.length > 0;
 
   // Determine if we need temporary browser for overlay detection
-  const needsTemporaryBrowser = mode === 'remote' && !browserConfig.fallbackToLocal && hasOverlays;
+  const needsTemporaryBrowser = mode === 'remote' && !browserConfig.fallbackToLocal && hasOverlaysNeedingDetection;
 
   if (needsTemporaryBrowser) {
     // Pure remote mode + overlays: Try to launch browser temporarily for detection
@@ -1176,7 +1203,7 @@ async function initializeBrowserAndRun() {
         if (!state) continue;
 
         // Create new cache with new base, pre-render from switch time
-        const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.style);
+        const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.detectedStyle);
         await newCache.preRender(new Date(switchTime), newCache.windowSize);
 
         // Store as pending (don't replace current cache yet)

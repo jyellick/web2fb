@@ -152,6 +152,33 @@
           "comment": {
             "type": "string",
             "description": "Optional comment explaining this overlay"
+          },
+          "manualConfig": {
+            "type": "boolean",
+            "description": "Skip browser-based detection and use pre-computed region/style (for Pi Zero 2 W)",
+            "default": false
+          },
+          "region": {
+            "type": "object",
+            "description": "Pre-computed overlay region (use tools/detect-overlays.js to generate)",
+            "properties": {
+              "x": {"type": "integer"},
+              "y": {"type": "integer"},
+              "width": {"type": "integer"},
+              "height": {"type": "integer"}
+            }
+          },
+          "detectedStyle": {
+            "type": "object",
+            "description": "Pre-computed style detected from page (use tools/detect-overlays.js to generate)",
+            "properties": {
+              "fontSize": {"type": "integer"},
+              "fontFamily": {"type": "string"},
+              "color": {"type": "string"},
+              "fontWeight": {"type": "string"},
+              "textAlign": {"type": "string"},
+              "letterSpacing": {"type": "string"}
+            }
           }
         }
       }
