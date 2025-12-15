@@ -1396,6 +1396,11 @@ async function initializeBrowserAndRun() {
 
       recoveryCheckInProgress = true;
       try {
+        // Skip health check in remote mode without browser
+        const browserConfig = config.browser || {};
+        const mode = browserConfig.mode || 'local';
+        const inRemoteModeWithoutBrowser = mode === 'remote' && !browserConfig.fallbackToLocal;
+
         // Health check: verify browser is still responsive
         if (browser && page) {
           // More lenient health check with retries to avoid false positives
@@ -1436,7 +1441,8 @@ async function initializeBrowserAndRun() {
             await restartBrowser('health check failed');
             return;
           }
-        } else {
+        } else if (!inRemoteModeWithoutBrowser) {
+          // Only treat null browser as error if we're NOT in remote mode
           console.error('\n' + '!'.repeat(60));
           console.error('🚨 CRITICAL: Browser or page object is null');
           console.error('Browser may have crashed without triggering disconnected event');
@@ -1446,20 +1452,23 @@ async function initializeBrowserAndRun() {
           await restartBrowser('browser null');
           return;
         }
+        // If in remote mode without browser, null is expected - continue
 
-        // Check profile size
-        const profileCheck = checkProfileSize(userDataDir, profileSizeThreshold);
+        // Check profile size (only if browser is running)
+        if (browser && userDataDir) {
+          const profileCheck = checkProfileSize(userDataDir, profileSizeThreshold);
 
-        if (profileCheck.exceeds) {
+          if (profileCheck.exceeds) {
           console.error('\n' + '!'.repeat(60));
           console.error('🚨 CRITICAL: Chrome profile too large');
           console.error(`Profile size: ${profileCheck.sizeFormatted} (threshold: ${profileCheck.thresholdFormatted})`);
           console.error('Large profile in tmpfs consumes RAM on Pi!');
           console.error('!'.repeat(60));
 
-          // Restart browser in-process
-          await restartBrowser('profile too large');
-          return;
+            // Restart browser in-process
+            await restartBrowser('profile too large');
+            return;
+          }
         }
 
         // Check stress level
