@@ -5,19 +5,18 @@
  * of web pages (like DakBoard) and return them to the Pi for local processing.
  *
  * Setup:
- * 1. Install dependencies: npm install
- * 2. Install wrangler: npm install -g wrangler
- * 3. Login: wrangler login
- * 4. Deploy: wrangler deploy
- * 5. Set API key secret: wrangler secret put API_KEY
+ * 1. Install wrangler: npm install -g wrangler
+ * 2. Login: wrangler login
+ * 3. Deploy: wrangler deploy --env=""
+ * 4. Set API key secret: wrangler secret put API_KEY
  *
  * Cost: ~$5 per million requests (~$0.11/month for typical usage)
+ *
+ * Note: env.BROWSER is the Puppeteer instance provided by Cloudflare
  */
 
-import puppeteer from "@cloudflare/puppeteer";
-
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     // CORS headers for Pi requests
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
@@ -63,7 +62,8 @@ export default {
       console.log(`Capturing screenshot: ${targetUrl} (${width}x${height})`);
 
       // Launch browser using Cloudflare's Browser Rendering API
-      const browser = await puppeteer.launch(env.BROWSER);
+      // env.BROWSER is the Puppeteer instance provided by the binding
+      const browser = await env.BROWSER.launch();
       const page = await browser.newPage();
 
       // Set viewport and user agent
