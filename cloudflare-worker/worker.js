@@ -5,15 +5,15 @@
  * of web pages (like DakBoard) and return them to the Pi for local processing.
  *
  * Setup:
- * 1. Install wrangler: npm install -g wrangler
- * 2. Login: wrangler login
- * 3. Deploy: wrangler deploy --env=""
- * 4. Set API key secret: wrangler secret put API_KEY
+ * 1. npm install
+ * 2. wrangler login
+ * 3. wrangler deploy --env=""
+ * 4. wrangler secret put API_KEY
  *
  * Cost: ~$5 per million requests (~$0.11/month for typical usage)
- *
- * Note: env.BROWSER is the Puppeteer instance provided by Cloudflare
  */
+
+import puppeteer from "@cloudflare/puppeteer";
 
 export default {
   async fetch(request, env, ctx) {
@@ -61,18 +61,9 @@ export default {
 
       console.log(`Capturing screenshot: ${targetUrl} (${width}x${height})`);
 
-      // Debug: Check what's available in env
-      console.log('env.BROWSER type:', typeof env.BROWSER);
-      console.log('env.BROWSER keys:', env.BROWSER ? Object.keys(env.BROWSER) : 'undefined');
-      console.log('Available env keys:', Object.keys(env));
-
       // Launch browser using Cloudflare's Browser Rendering API
-      // env.BROWSER is the Puppeteer instance provided by the binding
-      if (!env.BROWSER) {
-        throw new Error('Browser Rendering not available. Enable it in Cloudflare dashboard (requires Workers Paid plan).');
-      }
-
-      const browser = await env.BROWSER.launch();
+      // Pass the BROWSER binding to puppeteer.launch()
+      const browser = await puppeteer.launch(env.BROWSER);
       const page = await browser.newPage();
 
       // Set viewport and user agent

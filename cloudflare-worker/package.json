@@ -10,6 +10,9 @@
     "tail": "wrangler tail",
     "deploy:prod": "wrangler deploy --env production"
   },
+  "dependencies": {
+    "@cloudflare/puppeteer": "^0.0.9"
+  },
   "devDependencies": {
     "wrangler": "^3.0.0"
   },
