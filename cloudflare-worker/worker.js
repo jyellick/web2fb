@@ -61,8 +61,17 @@ export default {
 
       console.log(`Capturing screenshot: ${targetUrl} (${width}x${height})`);
 
+      // Debug: Check what's available in env
+      console.log('env.BROWSER type:', typeof env.BROWSER);
+      console.log('env.BROWSER keys:', env.BROWSER ? Object.keys(env.BROWSER) : 'undefined');
+      console.log('Available env keys:', Object.keys(env));
+
       // Launch browser using Cloudflare's Browser Rendering API
       // env.BROWSER is the Puppeteer instance provided by the binding
+      if (!env.BROWSER) {
+        throw new Error('Browser Rendering not available. Enable it in Cloudflare dashboard (requires Workers Paid plan).');
+      }
+
       const browser = await env.BROWSER.launch();
       const page = await browser.newPage();
 
