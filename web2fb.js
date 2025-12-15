@@ -1,148 +1,16 @@
 #!/usr/bin/env node
 
-const puppeteer = require('puppeteer');
 const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { loadConfig, getEnabledOverlays } = require('./lib/config');
-const { generateOverlay, detectOverlayRegion, hideOverlayElements } = require('./lib/overlays');
+const { generateOverlay } = require('./lib/overlays');
+const { createScreenshotProvider } = require('./lib/screenshot-providers');
 const StressMonitor = require('./lib/stress-monitor');
 const PerfMonitor = require('./lib/perf-monitor');
 const ClockCache = require('./lib/clock-cache');
 const { cleanupChromeTempDirs, checkProfileSize, formatBytes } = require('./lib/cleanup');
-
-/**
- * Fetch screenshot from remote service (Cloudflare Worker)
- * @param {string} url - Target URL to screenshot
- * @param {object} options - Screenshot options
- * @returns {Promise<Buffer>} - Screenshot buffer
- */
-async function fetchRemoteScreenshot(url, options = {}) {
-  const {
-    workerUrl,
-    apiKey,
-    width = 1920,
-    height = 1080,
-    userAgent,
-    timeout = 60000,
-    waitForImages = true,
-    waitForSelector = null,
-    hideSelectors = []
-  } = options;
-
-  if (!workerUrl) {
-    throw new Error('Remote screenshot URL not configured');
-  }
-
-  // Build query parameters
-  const params = new URLSearchParams({
-    url: url,
-    width: width.toString(),
-    height: height.toString(),
-    timeout: timeout.toString(),
-    waitForImages: waitForImages.toString()
-  });
-
-  if (userAgent) {
-    params.set('userAgent', userAgent);
-  }
-
-  if (waitForSelector) {
-    params.set('waitForSelector', waitForSelector);
-  }
-
-  if (hideSelectors && hideSelectors.length > 0) {
-    params.set('hideSelectors', hideSelectors.join(','));
-  }
-
-  const requestUrl = `${workerUrl}?${params.toString()}`;
-
-  const headers = {
-    'Accept': 'image/png'
-  };
-
-  if (apiKey) {
-    headers['X-API-Key'] = apiKey;
-  }
-
-  console.log(`Fetching screenshot from remote service: ${workerUrl}`);
-
-  const response = await fetch(requestUrl, {
-    method: 'GET',
-    headers,
-    signal: AbortSignal.timeout(timeout)
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Remote screenshot failed: ${response.status} ${response.statusText}\n${errorText}`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  console.log(`✓ Remote screenshot received: ${buffer.length} bytes`);
-
-  return buffer;
-}
-
-/**
- * Capture screenshot using configured mode (local or remote)
- * @param {object} page - Puppeteer page instance (may be null in remote mode)
- * @param {object} config - Configuration object
- * @returns {Promise<Buffer>} - Screenshot buffer
- */
-async function captureScreenshot(page, config) {
-  const browserConfig = config.browser || {};
-  const mode = browserConfig.mode || 'local';
-
-  if (mode === 'remote') {
-    try {
-      // Collect overlay selectors to hide from remote screenshot
-      const hideSelectors = (config.overlays || [])
-        .filter(o => o.enabled !== false && o.selector)
-        .map(o => o.selector);
-
-      // Use remote screenshot service
-      const screenshotBuffer = await fetchRemoteScreenshot(config.display.url, {
-        workerUrl: browserConfig.remoteScreenshotUrl,
-        apiKey: browserConfig.remoteApiKey,
-        width: config.display.width || 1920,
-        height: config.display.height || 1080,
-        userAgent: browserConfig.userAgent,
-        timeout: browserConfig.remoteTimeout || 60000,
-        waitForImages: config.performance?.waitForImages !== false,
-        hideSelectors
-      });
-
-      return screenshotBuffer;
-    } catch (error) {
-      console.error(`Remote screenshot failed: ${error.message}`);
-
-      // Fall back to local if configured
-      if (browserConfig.fallbackToLocal && page) {
-        console.log('Falling back to local browser screenshot...');
-        return await page.screenshot({
-          type: 'jpeg',
-          quality: 90
-        });
-      }
-
-      throw error;
-    }
-  }
-
-  // Local mode - use Puppeteer
-  if (!page) {
-    throw new Error('Local browser mode requires a page instance');
-  }
-
-  return await page.screenshot({
-    type: 'jpeg',
-    quality: 90
-  });
-}
 
 // Get current git commit hash
 function getGitCommit() {
@@ -222,11 +90,9 @@ const bufferPool = {
   maxSize: 0
 };
 
-// Browser state (recreated on restart)
-let browser = null;
-let page = null;
+// Screenshot provider (replaces browser/page)
+let screenshotProvider = null;
 let intervals = [];
-let userDataDir = null;
 
 // Detect framebuffer properties
 function detectFramebuffer() {
@@ -689,9 +555,9 @@ async function updateAllOverlays() {
 }
 
 // Restart browser in-process
-async function restartBrowser(reason) {
+async function restartProvider(reason) {
   console.log('\n' + '='.repeat(60));
-  console.log(`🔄 Restarting browser in-process (${reason})`);
+  console.log(`🔄 Restarting screenshot provider (${reason})`);
   console.log('='.repeat(60));
 
   // Enter recovery mode
@@ -703,23 +569,11 @@ async function restartBrowser(reason) {
     intervals.forEach(id => clearInterval(id));
     intervals = [];
 
-    // Close browser
-    if (browser) {
-      console.log('Closing browser...');
-      await browser.close().catch(err => console.warn('Browser close warning:', err.message));
-      browser = null;
-      page = null;
-    }
-
-    // Clean up Chrome profile
-    if (userDataDir) {
-      console.log('Cleaning up Chrome profile...');
-      try {
-        fs.rmSync(userDataDir, { recursive: true, force: true });
-        console.log(`✓ Cleaned up Chrome profile`);
-      } catch (err) {
-        console.warn('Warning: Could not remove Chrome profile:', err.message);
-      }
+    // Cleanup provider
+    if (screenshotProvider) {
+      console.log('Cleaning up screenshot provider...');
+      await screenshotProvider.cleanup();
+      screenshotProvider = null;
     }
 
     // Wait for cooldown
@@ -730,234 +584,38 @@ async function restartBrowser(reason) {
     // Exit recovery mode
     stressMonitor.exitRecoveryMode();
 
-    console.log('✓ Recovery complete, re-launching browser...\n');
+    console.log('✓ Recovery complete, re-initializing...\n');
 
-    // Re-initialize browser and page
-    await initializeBrowserAndRun();
+    // Re-initialize
+    await initializeAndRun();
 
   } catch (err) {
-    console.error('Fatal error during browser restart:', err);
+    console.error('Fatal error during provider restart:', err);
     process.exit(1);
   }
 }
 
-// Initialize browser and start main loop
-// Launch browser and create page
-async function launchBrowser(temporaryForOverlays = false) {
-  const browserConfig = config.browser || {};
-  const mode = browserConfig.mode || 'local';
-
-  // Skip browser launch in remote mode (unless fallback is enabled or overlays need detection)
-  if (mode === 'remote' && !browserConfig.fallbackToLocal && !temporaryForOverlays) {
-    console.log('Using remote screenshot service - skipping local browser launch');
-    browser = null;
-    page = null;
-    return;
-  }
-
-  if (mode === 'remote' && browserConfig.fallbackToLocal) {
-    console.log('Remote mode with local fallback - launching browser for fallback capability...');
-  }
-
-  if (temporaryForOverlays) {
-    console.log('Launching browser temporarily for overlay detection (will close after detection)...');
-  }
-
-  // Cleanup old Chrome temporary directories
-  console.log('Cleaning up old Chrome profiles...');
-  const cleanupStats = cleanupChromeTempDirs({
-    maxAge: 60 * 60 * 1000, // 1 hour
-    minSize: 1024 * 1024    // 1 MB
-  });
-
-  if (cleanupStats.removed > 0) {
-    console.log(`✓ Removed ${cleanupStats.removed} old Chrome profile(s), freed ${formatBytes(cleanupStats.freedSpace)}`);
-  } else {
-    console.log('✓ No old Chrome profiles to clean up');
-  }
-
-  // Build browser args
-  const browserArgs = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-blink-features=AutomationControlled',
-    '--disable-web-security',
-    '--disable-features=IsolateOrigins,site-per-process',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--disable-software-rasterizer',
-    '--disable-extensions',
-    '--disable-background-networking',
-    '--disable-background-timer-throttling',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-breakpad',
-    '--disable-component-extensions-with-background-pages',
-    '--disable-features=TranslateUI,BlinkGenPropertyTrees',
-    '--disable-ipc-flooding-protection',
-    '--disable-renderer-backgrounding',
-    '--metrics-recording-only',
-    '--mute-audio',
-    '--no-default-browser-check',
-    '--no-first-run',
-    '--no-pings',
-    '--no-zygote',
-    '--single-process',
-    // Aggressive cache control for RAM-constrained devices
-    '--disk-cache-size=1',              // Minimal disk cache (1 byte)
-    '--media-cache-size=1',             // Minimal media cache
-    '--disable-application-cache',      // No HTML5 app cache
-    '--disable-offline-load-stale-cache',
-    '--disable-back-forward-cache',
-    '--aggressive-cache-discard'
-  ];
-
-  // Set user data directory in /tmp/web2fb
-  userDataDir = path.join('/tmp', 'web2fb-chrome-profile');
-
-  const launchOptions = {
-    headless: 'new',
-    args: browserArgs,
-    userDataDir: userDataDir
-  };
-
-  if (config.browser.executablePath) {
-    launchOptions.executablePath = config.browser.executablePath;
-  }
-
-  console.log('Launching browser...');
-  const launchOpId = perfMonitor.start('browser:launch');
-  browser = await puppeteer.launch(launchOptions);
-  page = await browser.newPage();
-  perfMonitor.end(launchOpId);
-  perfMonitor.sampleMemory('after-browser-launch');
-
-  // Set browser process to lower priority (nice) to prioritize clock updates
-  // This ensures overlay updates aren't delayed by browser rendering
-  try {
-    const browserProcess = browser.process();
-    if (browserProcess && browserProcess.pid) {
-      const { execSync } = require('child_process');
-      // Set nice value to 10 (lower priority than default 0)
-      // Higher values = lower priority (range: -20 to 19)
-      execSync(`renice -n 10 -p ${browserProcess.pid}`, { stdio: 'ignore' });
-      console.log(`✓ Set browser process (PID ${browserProcess.pid}) to nice priority 10`);
-    }
-  } catch (err) {
-    console.warn(`Warning: Could not set browser process priority: ${err.message}`);
-    // Non-fatal - continue anyway
-  }
-
-  // Set up browser crash detection
-  browser.on('disconnected', () => {
-    console.error('\n' + '!'.repeat(60));
-    console.error('🚨 CRITICAL: Browser process disconnected/crashed');
-    console.error('Framebuffer will freeze unless browser is restarted');
-    console.error('!'.repeat(60));
-
-    // Trigger restart via the recovery mechanism
-    // Set a flag to trigger restart on next recovery check
-    if (!browser || !page) {
-      console.error('Browser already null, scheduling restart...');
-      // Schedule restart after a brief delay
-      setTimeout(async () => {
-        try {
-          await restartBrowser('browser disconnected');
-        } catch (err) {
-          console.error('Failed to restart browser after disconnect:', err);
-          console.error('Manual intervention may be required');
-        }
-      }, 5000); // 5 second delay to avoid rapid restart loops
-    }
-  });
-
-  // Set user agent if configured
-  if (config.browser.userAgent) {
-    await page.setUserAgent(config.browser.userAgent);
-  }
-
-  // Remove webdriver flag
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => undefined
-    });
-  });
-
-  // Set viewport to match framebuffer
-  console.log(`Setting viewport: ${fbInfo.width}x${fbInfo.height}`);
-  await page.setViewport({
-    width: fbInfo.width,
-    height: fbInfo.height,
-    deviceScaleFactor: 1,
-  });
-}
-
-// Detect and configure overlays
-async function detectAndConfigureOverlays() {
+// Configure overlays from mandatory metadata in config
+function configureOverlays() {
   const enabledOverlays = getEnabledOverlays(config);
-  if (enabledOverlays.length === 0) {
-    return enabledOverlays;
-  }
-
-  // Check if all overlays have manual configuration
-  // Debug: Check each overlay's manual config status
-  for (const o of enabledOverlays) {
-    console.log(`Overlay '${o.name}': manualConfig=${o.manualConfig}, hasRegion=${!!o.region}, hasDetectedStyle=${!!o.detectedStyle}`);
-  }
-
-  const manualOverlays = enabledOverlays.filter(o => o.manualConfig && o.region && o.detectedStyle);
-  const needsDetection = enabledOverlays.filter(o => !o.manualConfig || !o.region || !o.detectedStyle);
-
-  // Use manual configuration if provided (no browser needed!)
-  if (manualOverlays.length > 0) {
-    console.log(`Using manual configuration for ${manualOverlays.length} overlay(s) (no browser detection needed)`);
-    for (const overlay of manualOverlays) {
-      overlayStates.set(overlay.name, {
-        overlay,
-        region: overlay.region,
-        detectedStyle: overlay.detectedStyle || {}
-      });
-      console.log(`✓ Overlay '${overlay.name}' configured from manual data: (${overlay.region.x}, ${overlay.region.y}), size: ${overlay.region.width}x${overlay.region.height}`);
+  
+  console.log(`Configuring ${enabledOverlays.length} overlay(s) from config metadata...`);
+  
+  for (const overlay of enabledOverlays) {
+    // All overlays now have mandatory region and detectedStyle
+    if (!overlay.region || !overlay.detectedStyle) {
+      throw new Error(`Overlay '${overlay.name}' missing required metadata (region and detectedStyle)`);
     }
+    
+    overlayStates.set(overlay.name, {
+      overlay,
+      region: overlay.region,
+      detectedStyle: overlay.detectedStyle
+    });
+    
+    console.log(`✓ Overlay '${overlay.name}' configured: (${overlay.region.x}, ${overlay.region.y}), size: ${overlay.region.width}x${overlay.region.height}`);
   }
-
-  // Skip browser detection if no overlays need it
-  if (needsDetection.length === 0) {
-    return enabledOverlays;
-  }
-
-  // Overlays require a browser page for detection
-  if (!page) {
-    console.warn(`⚠️  ${needsDetection.length} overlay(s) need browser detection but browser is not available`);
-    console.warn('⚠️  Use tools/detect-overlays.js on a powerful machine to generate manual config');
-    return manualOverlays;
-  }
-
-  console.log(`Detecting ${needsDetection.length} overlay(s) using browser...`);
-
-  const detectAllOpId = perfMonitor.start('overlay:detectAll', { count: needsDetection.length });
-  for (const overlay of needsDetection) {
-    const detectOpId = perfMonitor.start('overlay:detectRegion', { name: overlay.name, selector: overlay.selector });
-    const detected = await detectOverlayRegion(page, overlay);
-    perfMonitor.end(detectOpId, { found: !!detected });
-
-    if (detected) {
-      overlayStates.set(overlay.name, detected);
-      console.log(`✓ Overlay '${overlay.name}' detected at (${detected.region.x}, ${detected.region.y}), size: ${detected.region.width}x${detected.region.height}`);
-    } else {
-      console.warn(`✗ Overlay '${overlay.name}' not found (selector: ${overlay.selector})`);
-    }
-  }
-  perfMonitor.end(detectAllOpId, { detected: overlayStates.size });
-
-  // Hide overlay elements
-  const detectedOverlays = enabledOverlays.filter(o => overlayStates.has(o.name));
-  if (detectedOverlays.length > 0) {
-    const hideOpId = perfMonitor.start('overlay:hideElements', { count: detectedOverlays.length });
-    await hideOverlayElements(page, detectedOverlays);
-    perfMonitor.end(hideOpId);
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-
+  
   return enabledOverlays;
 }
 
