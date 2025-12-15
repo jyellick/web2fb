@@ -11,10 +11,7 @@
   },
 
   "browser": {
-    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "timeout": 180000,
-    "imageLoadTimeout": 120000,
-    "disableAnimations": true
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   },
 
   "overlays": [
@@ -29,43 +26,25 @@
         "minute": "2-digit",
         "second": "2-digit"
       },
-      "detectStyle": true,
-      "comment": "Hides the DakBoard clock and renders it locally to avoid full page re-renders"
+      "comment": "Run tools/detect-overlays.js to generate region and detectedStyle metadata",
+      "region": {
+        "x": 100,
+        "y": 100,
+        "width": 300,
+        "height": 100
+      },
+      "detectedStyle": {
+        "fontSize": 72,
+        "fontFamily": "Arial, sans-serif",
+        "color": "rgb(255, 255, 255)",
+        "fontWeight": "normal",
+        "textAlign": "center",
+        "letterSpacing": "normal"
+      }
     }
   ],
 
-  "changeDetection": {
-    "enabled": true,
-    "watchSelectors": ["img", "[style*='background']"],
-    "watchAttributes": ["src", "style", "class", "srcset"],
-    "periodicCheckInterval": 120000,
-    "debounceDelay": 500,
-    "comment": "Detects when background images change and triggers re-render"
-  },
+  "changeDetection": true,
 
-  "performance": {
-    "scrollToLoadLazy": true,
-    "waitForImages": true,
-    "bufferPooling": true,
-    "splashScreen": "splash.png"
-  },
-
-  "stressManagement": {
-    "enabled": true,
-    "thresholds": {
-      "overlayUpdateWarning": 3000,
-      "overlayUpdateCritical": 10000,
-      "baseImageWarning": 15000,
-      "baseImageCritical": 25000
-    },
-    "recovery": {
-      "skipUpdatesOnStress": true,
-      "maxConsecutiveSlowOps": 3,
-      "cooldownPeriod": 30000,
-      "killBrowserThreshold": 3,
-      "recoveryCheckInterval": 30000,
-      "profileSizeThresholdMB": 40
-    },
-    "comment": "Prevents memory thrashing on Pi Zero 2 W by throttling background operations when system is stressed"
-  }
+  "splashScreen": "splash.png"
 }

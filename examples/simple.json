@@ -10,25 +10,7 @@
     "framebufferDevice": "/dev/fb0"
   },
 
-  "browser": {
-    "timeout": 180000,
-    "imageLoadTimeout": 120000,
-    "disableAnimations": false
-  },
-
   "overlays": [],
 
-  "changeDetection": {
-    "enabled": true,
-    "watchSelectors": ["img"],
-    "watchAttributes": ["src"],
-    "periodicCheckInterval": 300000,
-    "comment": "Check for image changes every 5 minutes"
-  },
-
-  "performance": {
-    "scrollToLoadLazy": true,
-    "waitForImages": true,
-    "bufferPooling": true
-  }
+  "changeDetection": true
 }

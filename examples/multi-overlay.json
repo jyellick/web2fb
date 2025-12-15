@@ -10,11 +10,6 @@
     "framebufferDevice": "/dev/fb0"
   },
 
-  "browser": {
-    "timeout": 180000,
-    "imageLoadTimeout": 120000,
-    "disableAnimations": true
-  },
 
   "overlays": [
     {
@@ -29,7 +24,21 @@
         "second": "2-digit",
         "hour12": false
       },
-      "detectStyle": true
+      "comment": "Run tools/detect-overlays.js to generate region and detectedStyle metadata",
+      "region": {
+        "x": 100,
+        "y": 50,
+        "width": 300,
+        "height": 80
+      },
+      "detectedStyle": {
+        "fontSize": 64,
+        "fontFamily": "sans-serif",
+        "color": "rgb(255, 255, 255)",
+        "fontWeight": "bold",
+        "textAlign": "center",
+        "letterSpacing": "normal"
+      }
     },
     {
       "name": "date",
@@ -43,8 +52,21 @@
         "month": "long",
         "day": "numeric"
       },
-      "detectStyle": true,
-      "comment": "Updates date every minute"
+      "comment": "Updates date every minute. Run tools/detect-overlays.js to generate region and detectedStyle metadata",
+      "region": {
+        "x": 100,
+        "y": 150,
+        "width": 500,
+        "height": 60
+      },
+      "detectedStyle": {
+        "fontSize": 36,
+        "fontFamily": "sans-serif",
+        "color": "rgb(200, 200, 200)",
+        "fontWeight": "normal",
+        "textAlign": "center",
+        "letterSpacing": "normal"
+      }
     },
     {
       "name": "custom-text",
@@ -53,21 +75,23 @@
       "enabled": false,
       "updateInterval": 5000,
       "text": "System Online",
-      "detectStyle": true,
-      "comment": "Example of custom static text overlay (disabled)"
+      "comment": "Example of custom static text overlay (disabled). Run tools/detect-overlays.js to generate region and detectedStyle metadata",
+      "region": {
+        "x": 100,
+        "y": 230,
+        "width": 300,
+        "height": 40
+      },
+      "detectedStyle": {
+        "fontSize": 24,
+        "fontFamily": "sans-serif",
+        "color": "rgb(0, 255, 0)",
+        "fontWeight": "normal",
+        "textAlign": "left",
+        "letterSpacing": "normal"
+      }
     }
   ],
 
-  "changeDetection": {
-    "enabled": true,
-    "watchSelectors": ["img", "[style*='background']"],
-    "watchAttributes": ["src", "style", "class"],
-    "periodicCheckInterval": 120000
-  },
-
-  "performance": {
-    "scrollToLoadLazy": true,
-    "waitForImages": true,
-    "bufferPooling": true
-  }
+  "changeDetection": true
 }

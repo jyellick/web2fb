@@ -14,29 +14,13 @@
     "mode": "remote",
     "remoteScreenshotUrl": "https://web2fb-screenshot.YOUR-SUBDOMAIN.workers.dev",
     "remoteApiKey": "your-api-key-here",
-    "fallbackToLocal": false,
     "remoteTimeout": 60000,
-    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "comment": "Pure remote mode - no local browser launched. Fastest and lowest resource usage, but overlays and change detection won't work"
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   },
 
   "overlays": [],
 
-  "changeDetection": {
-    "enabled": false,
-    "comment": "Change detection requires local browser - disabled in pure remote mode"
-  },
+  "changeDetection": false,
 
-  "performance": {
-    "waitForImages": true,
-    "bufferPooling": true,
-    "splashScreen": "splash.png"
-  },
-
-  "perfMonitoring": {
-    "enabled": true,
-    "verbose": false,
-    "reportInterval": 120000,
-    "trackMemory": true
-  }
+  "splashScreen": "splash.png"
 }
