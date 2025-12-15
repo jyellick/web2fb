@@ -1,0 +1,24 @@
+{
+  "name": "web2fb-screenshot-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for web2fb screenshot service",
+  "main": "worker.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail",
+    "deploy:prod": "wrangler deploy --env production"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  },
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "screenshot",
+    "puppeteer",
+    "web2fb"
+  ],
+  "author": "",
+  "license": "MIT"
+}

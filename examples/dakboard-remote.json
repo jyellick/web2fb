@@ -1,0 +1,80 @@
+{
+  "$schema": "../config.schema.json",
+  "name": "DakBoard Display (Remote Screenshots)",
+  "description": "DakBoard configuration using Cloudflare Worker for screenshots - eliminates browser overhead from Pi",
+
+  "display": {
+    "url": "https://dakboard.com/display/uuid/YOUR-UUID-HERE",
+    "width": 1920,
+    "height": 1080,
+    "framebufferDevice": "/dev/fb0"
+  },
+
+  "browser": {
+    "mode": "remote",
+    "remoteScreenshotUrl": "https://web2fb-screenshot.YOUR-SUBDOMAIN.workers.dev",
+    "remoteApiKey": "your-api-key-here",
+    "fallbackToLocal": true,
+    "remoteTimeout": 60000,
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "comment": "Remote mode offloads browser to Cloudflare Worker. Set fallbackToLocal=false to disable local browser entirely (but overlays won't work)"
+  },
+
+  "overlays": [
+    {
+      "name": "clock",
+      "type": "clock",
+      "selector": ".time.large",
+      "enabled": true,
+      "updateInterval": 1000,
+      "format": {
+        "hour": "numeric",
+        "minute": "2-digit",
+        "second": "2-digit"
+      },
+      "detectStyle": true,
+      "comment": "Note: Overlays require local browser for style detection. With remote mode, browser is only used once at startup for detection, then closed if fallbackToLocal=false"
+    }
+  ],
+
+  "changeDetection": {
+    "enabled": true,
+    "watchSelectors": ["img", "[style*='background']"],
+    "watchAttributes": ["src", "style", "class", "srcset"],
+    "periodicCheckInterval": 120000,
+    "debounceDelay": 500,
+    "comment": "Note: Change detection requires local browser. Set mode='local' or fallbackToLocal=true"
+  },
+
+  "performance": {
+    "scrollToLoadLazy": true,
+    "waitForImages": true,
+    "bufferPooling": true,
+    "splashScreen": "splash.png"
+  },
+
+  "perfMonitoring": {
+    "enabled": true,
+    "verbose": false,
+    "reportInterval": 120000,
+    "trackMemory": true
+  },
+
+  "stressManagement": {
+    "enabled": true,
+    "thresholds": {
+      "overlayUpdateWarning": 3000,
+      "overlayUpdateCritical": 10000,
+      "baseImageWarning": 5000,
+      "baseImageCritical": 15000
+    },
+    "recovery": {
+      "skipUpdatesOnStress": true,
+      "maxConsecutiveSlowOps": 3,
+      "cooldownPeriod": 30000,
+      "killBrowserThreshold": 3,
+      "recoveryCheckInterval": 30000
+    },
+    "comment": "With remote screenshots, stress from browser is eliminated, so thresholds can be more aggressive"
+  }
+}

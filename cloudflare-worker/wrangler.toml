@@ -1,0 +1,22 @@
+name = "web2fb-screenshot"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Browser Rendering binding
+# This enables Puppeteer in the worker
+browser = { binding = "BROWSER" }
+
+# Optional: Set API key for authentication
+# Run: wrangler secret put API_KEY
+# Then use this key in web2fb config
+
+# Worker limits
+# Free tier: 100,000 requests/day
+# Browser Rendering: $5 per million requests after free tier
+
+[env.production]
+name = "web2fb-screenshot"
+route = { pattern = "screenshot.yourdomain.com/*", zone_name = "yourdomain.com" }
+
+[env.development]
+name = "web2fb-screenshot-dev"

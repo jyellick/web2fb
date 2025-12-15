@@ -44,13 +44,39 @@
     "browser": {
       "type": "object",
       "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["local", "remote"],
+          "description": "Screenshot mode: 'local' uses Puppeteer on Pi, 'remote' uses cloud service (Cloudflare Worker)",
+          "default": "local"
+        },
+        "remoteScreenshotUrl": {
+          "type": "string",
+          "description": "URL to remote screenshot service (Cloudflare Worker). Required when mode is 'remote'",
+          "format": "uri"
+        },
+        "remoteApiKey": {
+          "type": "string",
+          "description": "API key for authenticating with remote screenshot service"
+        },
+        "fallbackToLocal": {
+          "type": "boolean",
+          "description": "Fall back to local browser if remote screenshot service fails",
+          "default": true
+        },
+        "remoteTimeout": {
+          "type": "integer",
+          "description": "Timeout for remote screenshot requests in milliseconds",
+          "default": 60000,
+          "minimum": 5000
+        },
         "userAgent": {
           "type": "string",
           "description": "Custom user agent string"
         },
         "timeout": {
           "type": "integer",
-          "description": "Page navigation timeout in milliseconds",
+          "description": "Page navigation timeout in milliseconds (local browser only)",
           "default": 180000,
           "minimum": 1000
         },
@@ -62,7 +88,7 @@
         },
         "disableAnimations": {
           "type": "boolean",
-          "description": "Disable CSS animations and transitions",
+          "description": "Disable CSS animations and transitions (local browser only)",
           "default": true
         }
       }

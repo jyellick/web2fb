@@ -12,6 +12,127 @@ const PerfMonitor = require('./lib/perf-monitor');
 const ClockCache = require('./lib/clock-cache');
 const { cleanupChromeTempDirs, checkProfileSize, formatBytes } = require('./lib/cleanup');
 
+/**
+ * Fetch screenshot from remote service (Cloudflare Worker)
+ * @param {string} url - Target URL to screenshot
+ * @param {object} options - Screenshot options
+ * @returns {Promise<Buffer>} - Screenshot buffer
+ */
+async function fetchRemoteScreenshot(url, options = {}) {
+  const {
+    workerUrl,
+    apiKey,
+    width = 1920,
+    height = 1080,
+    userAgent,
+    timeout = 60000,
+    waitForImages = true,
+    waitForSelector = null
+  } = options;
+
+  if (!workerUrl) {
+    throw new Error('Remote screenshot URL not configured');
+  }
+
+  // Build query parameters
+  const params = new URLSearchParams({
+    url: url,
+    width: width.toString(),
+    height: height.toString(),
+    timeout: timeout.toString(),
+    waitForImages: waitForImages.toString()
+  });
+
+  if (userAgent) {
+    params.set('userAgent', userAgent);
+  }
+
+  if (waitForSelector) {
+    params.set('waitForSelector', waitForSelector);
+  }
+
+  const requestUrl = `${workerUrl}?${params.toString()}`;
+
+  const headers = {
+    'Accept': 'image/png'
+  };
+
+  if (apiKey) {
+    headers['X-API-Key'] = apiKey;
+  }
+
+  console.log(`Fetching screenshot from remote service: ${workerUrl}`);
+
+  const response = await fetch(requestUrl, {
+    method: 'GET',
+    headers,
+    signal: AbortSignal.timeout(timeout)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Remote screenshot failed: ${response.status} ${response.statusText}\n${errorText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  console.log(`✓ Remote screenshot received: ${buffer.length} bytes`);
+
+  return buffer;
+}
+
+/**
+ * Capture screenshot using configured mode (local or remote)
+ * @param {object} page - Puppeteer page instance (may be null in remote mode)
+ * @param {object} config - Configuration object
+ * @returns {Promise<Buffer>} - Screenshot buffer
+ */
+async function captureScreenshot(page, config) {
+  const browserConfig = config.browser || {};
+  const mode = browserConfig.mode || 'local';
+
+  if (mode === 'remote') {
+    try {
+      // Use remote screenshot service
+      const screenshotBuffer = await fetchRemoteScreenshot(config.display.url, {
+        workerUrl: browserConfig.remoteScreenshotUrl,
+        apiKey: browserConfig.remoteApiKey,
+        width: config.display.width || 1920,
+        height: config.display.height || 1080,
+        userAgent: browserConfig.userAgent,
+        timeout: browserConfig.remoteTimeout || 60000,
+        waitForImages: config.performance?.waitForImages !== false
+      });
+
+      return screenshotBuffer;
+    } catch (error) {
+      console.error(`Remote screenshot failed: ${error.message}`);
+
+      // Fall back to local if configured
+      if (browserConfig.fallbackToLocal && page) {
+        console.log('Falling back to local browser screenshot...');
+        return await page.screenshot({
+          type: 'jpeg',
+          quality: 90
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  // Local mode - use Puppeteer
+  if (!page) {
+    throw new Error('Local browser mode requires a page instance');
+  }
+
+  return await page.screenshot({
+    type: 'jpeg',
+    quality: 90
+  });
+}
+
 // Get current git commit hash
 function getGitCommit() {
   try {
@@ -612,6 +733,21 @@ async function restartBrowser(reason) {
 // Initialize browser and start main loop
 // Launch browser and create page
 async function launchBrowser() {
+  const browserConfig = config.browser || {};
+  const mode = browserConfig.mode || 'local';
+
+  // Skip browser launch in remote mode (unless fallback is enabled)
+  if (mode === 'remote' && !browserConfig.fallbackToLocal) {
+    console.log('Using remote screenshot service - skipping local browser launch');
+    browser = null;
+    page = null;
+    return;
+  }
+
+  if (mode === 'remote' && browserConfig.fallbackToLocal) {
+    console.log('Remote mode with local fallback - launching browser for fallback capability...');
+  }
+
   // Cleanup old Chrome temporary directories
   console.log('Cleaning up old Chrome profiles...');
   const cleanupStats = cleanupChromeTempDirs({
@@ -747,6 +883,13 @@ async function detectAndConfigureOverlays() {
     return enabledOverlays;
   }
 
+  // Overlays require a browser page for detection
+  if (!page) {
+    console.warn('⚠️  Overlays are configured but browser is not available (remote mode without fallback)');
+    console.warn('⚠️  Overlays will be skipped. To use overlays, set browser.fallbackToLocal = true');
+    return [];
+  }
+
   console.log(`Detecting ${enabledOverlays.length} overlay(s)...`);
 
   // Clear existing overlay states on restart
@@ -839,10 +982,7 @@ async function initializeBrowserAndRun() {
   // Capture base image
   console.log('Capturing base image...');
   const screenshotOpId = perfMonitor.start('browser:screenshot');
-  baseImageBuffer = await page.screenshot({
-    type: 'jpeg',
-    quality: 90
-  });
+  baseImageBuffer = await captureScreenshot(page, config);
   perfMonitor.end(screenshotOpId, { bufferSize: baseImageBuffer.length });
   perfMonitor.sampleMemory('after-base-screenshot');
   console.log('Base image captured');
@@ -920,10 +1060,7 @@ async function initializeBrowserAndRun() {
 
       // Screenshot new page
       const screenshotOpId = perfMonitor.start('baseImage:screenshot');
-      const newBaseImageBuffer = await page.screenshot({
-        type: 'jpeg',
-        quality: 90
-      });
+      const newBaseImageBuffer = await captureScreenshot(page, config);
       perfMonitor.end(screenshotOpId, { bufferSize: newBaseImageBuffer.length });
 
       // Extract new base regions (but don't replace current ones yet)
