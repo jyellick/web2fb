@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Cloudflare Worker for web2fb screenshot service",
   "main": "worker.js",
+  "type": "module",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
@@ -10,6 +11,7 @@
     "deploy:prod": "wrangler deploy --env production"
   },
   "devDependencies": {
+    "@cloudflare/puppeteer": "^0.0.1",
     "wrangler": "^3.0.0"
   },
   "keywords": [
