@@ -732,12 +732,12 @@ async function restartBrowser(reason) {
 
 // Initialize browser and start main loop
 // Launch browser and create page
-async function launchBrowser() {
+async function launchBrowser(temporaryForOverlays = false) {
   const browserConfig = config.browser || {};
   const mode = browserConfig.mode || 'local';
 
-  // Skip browser launch in remote mode (unless fallback is enabled)
-  if (mode === 'remote' && !browserConfig.fallbackToLocal) {
+  // Skip browser launch in remote mode (unless fallback is enabled or overlays need detection)
+  if (mode === 'remote' && !browserConfig.fallbackToLocal && !temporaryForOverlays) {
     console.log('Using remote screenshot service - skipping local browser launch');
     browser = null;
     page = null;
@@ -746,6 +746,10 @@ async function launchBrowser() {
 
   if (mode === 'remote' && browserConfig.fallbackToLocal) {
     console.log('Remote mode with local fallback - launching browser for fallback capability...');
+  }
+
+  if (temporaryForOverlays) {
+    console.log('Launching browser temporarily for overlay detection (will close after detection)...');
   }
 
   // Cleanup old Chrome temporary directories
@@ -923,7 +927,21 @@ async function detectAndConfigureOverlays() {
 }
 
 async function initializeBrowserAndRun() {
-  await launchBrowser();
+  const browserConfig = config.browser || {};
+  const mode = browserConfig.mode || 'local';
+  const enabledOverlays = getEnabledOverlays(config);
+  const hasOverlays = enabledOverlays.length > 0;
+
+  // Determine if we need temporary browser for overlay detection
+  const needsTemporaryBrowser = mode === 'remote' && !browserConfig.fallbackToLocal && hasOverlays;
+
+  if (needsTemporaryBrowser) {
+    // Pure remote mode + overlays: Launch browser temporarily for detection
+    await launchBrowser(true);
+  } else {
+    // Normal mode or remote with fallback
+    await launchBrowser();
+  }
 
   // Skip browser page operations in pure remote mode (no local browser)
   if (page) {
@@ -982,7 +1000,7 @@ async function initializeBrowserAndRun() {
   await new Promise(resolve => setTimeout(resolve, 2000));
 
   // Detect and configure overlays
-  const enabledOverlays = await detectAndConfigureOverlays();
+  await detectAndConfigureOverlays();
 
   // Capture base image
   console.log('Capturing base image...');
@@ -996,6 +1014,15 @@ async function initializeBrowserAndRun() {
   if (overlayStates.size > 0) {
     console.log('Caching base regions for overlays...');
     await cacheBaseRegions();
+  }
+
+  // Close temporary browser after overlay detection and initial capture
+  if (needsTemporaryBrowser && browser) {
+    console.log('Closing temporary browser (overlay detection complete)...');
+    await browser.close();
+    browser = null;
+    page = null;
+    console.log('✓ Browser closed - now operating in pure remote mode');
   }
 
   /**
