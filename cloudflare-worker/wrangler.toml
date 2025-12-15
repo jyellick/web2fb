@@ -4,15 +4,8 @@ compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Browser Rendering binding
-# This enables Puppeteer in the worker
+# This enables Puppeteer in the worker (puppeteer available as global)
 browser = { binding = "BROWSER" }
-
-# Mark @cloudflare/puppeteer as external (provided by Cloudflare runtime)
-[build]
-command = ""
-
-[build.upload]
-format = "modules"
 
 # Optional: Set API key for authentication
 # Run: wrangler secret put API_KEY

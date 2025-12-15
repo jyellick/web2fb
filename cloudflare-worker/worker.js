@@ -11,9 +11,9 @@
  * 4. Set API key secret: wrangler secret put API_KEY
  *
  * Cost: ~$5 per million requests (~$0.11/month for typical usage)
+ *
+ * Note: puppeteer is provided globally by Cloudflare when browser binding is configured
  */
-
-import puppeteer from "@cloudflare/puppeteer";
 
 export default {
   async fetch(request, env) {
