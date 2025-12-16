@@ -147,9 +147,42 @@
       "default": 300000,
       "minimum": 60000
     },
-    "splashScreen": {
-      "type": "string",
-      "description": "Path to splash screen image to show during startup. Performance monitoring can be enabled with DEBUG=1 environment variable."
+    "splash": {
+      "type": "object",
+      "description": "Splash screen configuration (rendered as text overlay during startup). Performance monitoring can be enabled with DEBUG=1 environment variable.",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Text to display on splash screen",
+          "default": "web2fb - Loading..."
+        },
+        "style": {
+          "type": "object",
+          "description": "Text style for splash screen",
+          "properties": {
+            "fontSize": {
+              "type": "integer",
+              "description": "Font size in pixels",
+              "default": 48
+            },
+            "fontFamily": {
+              "type": "string",
+              "description": "Font family",
+              "default": "sans-serif"
+            },
+            "color": {
+              "type": "string",
+              "description": "Text color",
+              "default": "rgb(255, 255, 255)"
+            },
+            "fontWeight": {
+              "type": "string",
+              "description": "Font weight",
+              "default": "normal"
+            }
+          }
+        }
+      }
     }
   }
 }

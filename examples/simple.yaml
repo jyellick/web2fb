@@ -14,3 +14,12 @@ overlays: []
 
 # Refresh base image every 10 minutes
 refreshInterval: 600000
+
+# Splash screen shown during startup
+splash:
+  text: "web2fb - Loading..."
+  style:
+    fontSize: 48
+    fontFamily: sans-serif
+    color: rgb(255, 255, 255)
+    fontWeight: normal
