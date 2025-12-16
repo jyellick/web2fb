@@ -266,7 +266,20 @@ async function initializeAndRun() {
 
       const duration = Date.now() - startTime;
       perfMonitor.end(perfOpId, { success: true, duration });
-      console.log(`✓ Base image recaptured in ${duration}ms, transition scheduled`);
+
+      // If there are no overlays, immediately apply the transition (no need to wait for overlay update loop)
+      if (enabledOverlays.length === 0) {
+        console.log(`✓ Base image recaptured in ${duration}ms, applying immediately (no overlays)`);
+        console.log('\n🔄 Writing updated base image to framebuffer...');
+
+        baseImageBuffer = pendingBaseTransition.newBaseImageBuffer;
+        await framebuffer.writeFull(baseImageBuffer);
+
+        console.log('✓ Base image written to framebuffer');
+        pendingBaseTransition = null;
+      } else {
+        console.log(`✓ Base image recaptured in ${duration}ms, transition scheduled`);
+      }
 
     } catch (err) {
       const duration = Date.now() - startTime;
