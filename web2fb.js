@@ -9,6 +9,9 @@
  * - Framebuffer (Linux framebuffer device)
  */
 
+// Load environment variables from .env file (if present)
+require('dotenv').config();
+
 const sharp = require('sharp');
 const { execSync } = require('child_process');
 const { loadConfig, getEnabledOverlays } = require('./lib/config');
