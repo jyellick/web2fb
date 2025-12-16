@@ -99,48 +99,80 @@ export default {
       });
 
       // Wait for page to be fully stable (no loading indicators, document ready)
+      // Use manual polling instead of waitForFunction to avoid DakBoard's interference
+      // with Puppeteer's internal polling variables (__name, etc.)
       console.log('Waiting for page to stabilize...');
-      await page.waitForFunction(() => {
-        // Check document is fully loaded
-        if (document.readyState !== 'complete') return false;
+      let stable = false;
+      let attempts = 0;
+      const maxAttempts = 60; // 30 seconds max (60 * 500ms)
 
-        // Check for common loading indicators
-        const loadingElements = document.querySelectorAll(
-          '[class*="loading"], [class*="spinner"], [class*="Loading"], ' +
-          '[aria-busy="true"], [data-loading="true"]'
-        );
-        if (Array.from(loadingElements).some(el => {
-          const style = window.getComputedStyle(el);
-          return style.display !== 'none' && style.visibility !== 'hidden';
-        })) {
-          return false;
+      while (!stable && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        try {
+          stable = await page.evaluate(() => {
+            // Check document is fully loaded
+            if (document.readyState !== 'complete') return false;
+
+            // Check for common loading indicators
+            const loadingElements = document.querySelectorAll(
+              '[class*="loading"], [class*="spinner"], [class*="Loading"], ' +
+              '[aria-busy="true"], [data-loading="true"]'
+            );
+            if (Array.from(loadingElements).some(el => {
+              const style = window.getComputedStyle(el);
+              return style.display !== 'none' && style.visibility !== 'hidden';
+            })) {
+              return false;
+            }
+
+            return true;
+          });
+        } catch (err) {
+          // Page environment not ready yet, continue polling
+          console.log(`Stability check failed (attempt ${attempts + 1}): ${err.message}`);
         }
+        attempts++;
+      }
 
-        return true;
-      }, { timeout: 30000 });
+      if (!stable) {
+        throw new Error('Page failed to stabilize after 30 seconds');
+      }
+      console.log(`Page stabilized after ${attempts * 500}ms`);
 
       // Wait for specific selector(s) if provided
-      // Use waitForFunction instead of waitForSelector to avoid Puppeteer internal race conditions
+      // Use manual polling to avoid DakBoard's interference with Puppeteer's internal variables
       if (waitForSelector) {
         const selectors = waitForSelector.split(',').map(s => s.trim()).filter(Boolean);
         console.log(`Waiting for ${selectors.length} selector(s): ${selectors.join(', ')}`);
 
-        // Wait for all selectors using waitForFunction (more reliable than waitForSelector)
-        await page.waitForFunction((selectorList) => {
-          return selectorList.every(selector => {
-            const element = document.querySelector(selector);
-            if (!element) return false;
+        let selectorsFound = false;
+        let selectorAttempts = 0;
+        const maxSelectorAttempts = Math.floor(timeout / 500); // Poll every 500ms
 
-            // Ensure element is visible
-            const style = window.getComputedStyle(element);
-            return style.display !== 'none' && style.visibility !== 'hidden';
-          });
-        }, { timeout }, selectors).catch(err => {
-          console.error(`Timeout waiting for selectors:`, err.message);
-          throw new Error(`Selectors not found: ${selectors.join(', ')}`);
-        });
+        while (!selectorsFound && selectorAttempts < maxSelectorAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          try {
+            selectorsFound = await page.evaluate((selectorList) => {
+              return selectorList.every(selector => {
+                const element = document.querySelector(selector);
+                if (!element) return false;
 
-        console.log('All selectors found');
+                // Ensure element is visible
+                const style = window.getComputedStyle(element);
+                return style.display !== 'none' && style.visibility !== 'hidden';
+              });
+            }, selectors);
+          } catch (err) {
+            // Page environment not ready yet, continue polling
+            console.log(`Selector check failed (attempt ${selectorAttempts + 1}): ${err.message}`);
+          }
+          selectorAttempts++;
+        }
+
+        if (!selectorsFound) {
+          throw new Error(`Selectors not found after ${timeout}ms: ${selectors.join(', ')}`);
+        }
+        console.log(`All selectors found after ${selectorAttempts * 500}ms`);
       }
 
       // Wait for images to load (DakBoard-specific)
