@@ -171,6 +171,16 @@ async function initializeAndRun() {
       const newBaseImageBuffer = await screenshotProvider.captureScreenshot(hideSelectors);
       perfMonitor.end(screenshotOpId, { bufferSize: newBaseImageBuffer.length });
 
+      // Validate that sharp can process the buffer
+      let metadata;
+      try {
+        metadata = await sharp(newBaseImageBuffer).metadata();
+        console.log(`Screenshot metadata: ${metadata.format} ${metadata.width}x${metadata.height}, ` +
+                    `channels: ${metadata.channels}, space: ${metadata.space}`);
+      } catch (err) {
+        throw new Error(`Sharp cannot process screenshot buffer: ${err.message}`);
+      }
+
       // Extract new base regions (but don't replace current ones yet)
       const newOverlayStates = new Map();
 
@@ -179,24 +189,34 @@ async function initializeAndRun() {
 
         const extractOpId = perfMonitor.start('baseImage:extractRegion', { name: overlay.name });
 
-        const baseRegionBuffer = await sharp(newBaseImageBuffer)
-          .extract({
-            left: overlay.region.x,
-            top: overlay.region.y,
-            width: overlay.region.width,
-            height: overlay.region.height
-          })
-          .raw()
-          .toBuffer();
+        try {
+          const baseRegionBuffer = await sharp(newBaseImageBuffer)
+            .extract({
+              left: overlay.region.x,
+              top: overlay.region.y,
+              width: overlay.region.width,
+              height: overlay.region.height
+            })
+            .raw()
+            .toBuffer();
 
-        newOverlayStates.set(overlay.name, {
-          overlay,
-          region: overlay.region,
-          style: overlay.style,
-          baseRegionBuffer
-        });
+          newOverlayStates.set(overlay.name, {
+            overlay,
+            region: overlay.region,
+            style: overlay.style,
+            baseRegionBuffer
+          });
 
-        perfMonitor.end(extractOpId);
+          perfMonitor.end(extractOpId);
+        } catch (err) {
+          perfMonitor.end(extractOpId, { success: false });
+          throw new Error(
+            `Failed to extract region for overlay '${overlay.name}': ${err.message}\n` +
+            `Region: x=${overlay.region.x}, y=${overlay.region.y}, ` +
+            `w=${overlay.region.width}, h=${overlay.region.height}\n` +
+            `Image: ${metadata.width}x${metadata.height}`
+          );
+        }
       }
 
       // Schedule transition at next second boundary for smooth clock update
