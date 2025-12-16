@@ -51,6 +51,8 @@ export default {
       const timeout = parseInt(url.searchParams.get('timeout') || '180000');
       const waitForImages = url.searchParams.get('waitForImages') !== 'false';
       const waitForSelector = url.searchParams.get('waitForSelector');
+      const waitDelay = parseInt(url.searchParams.get('waitDelay') || '0');
+      const waitForNetworkIdle = url.searchParams.get('waitForNetworkIdle') === 'true';
       const hideSelectors = url.searchParams.get('hideSelectors')?.split(',').filter(Boolean) || [];
 
       if (!targetUrl) {
@@ -72,9 +74,28 @@ export default {
       await page.setUserAgent(userAgent);
 
       // Navigate to page
+      // Use networkidle2 (2 connections) by default, or networkidle0 if explicitly requested
+      const waitUntil = waitForNetworkIdle ? 'networkidle0' : 'networkidle2';
       await page.goto(targetUrl, {
-        waitUntil: 'networkidle0',
+        waitUntil,
         timeout
+      });
+
+      // Scroll to trigger lazy loading
+      console.log('Scrolling page to trigger lazy-loaded content...');
+      await page.evaluate(async () => {
+        await new Promise((resolve) => {
+          let scrollCount = 0;
+          const scrollInterval = setInterval(() => {
+            window.scrollBy(0, window.innerHeight);
+            scrollCount++;
+            if (scrollCount >= 3 || window.scrollY + window.innerHeight >= document.body.scrollHeight) {
+              clearInterval(scrollInterval);
+              window.scrollTo(0, 0);
+              setTimeout(resolve, 500);
+            }
+          }, 200);
+        });
       });
 
       // Wait for specific selector if provided
@@ -123,6 +144,12 @@ export default {
 
           await Promise.all([...imagePromises, ...bgPromises]);
         }, timeout);
+      }
+
+      // Additional delay if requested (for any remaining async content)
+      if (waitDelay > 0) {
+        console.log(`Waiting additional ${waitDelay}ms for async content...`);
+        await new Promise(resolve => setTimeout(resolve, waitDelay));
       }
 
       // Hide overlay elements (for local rendering)
