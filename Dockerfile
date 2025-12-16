@@ -34,14 +34,17 @@ COPY package*.json ./
 RUN npm ci --only=production
 
 # Copy application files
-COPY screenshot.js ./
+COPY web2fb.js ./
+COPY lib ./lib/
+COPY config.schema.json ./
+COPY .env.example .env.example
 
 # Set Puppeteer to use system Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Expose HTTP port
-EXPOSE 3000
+# Note: Mount your config file at /app/config.yaml
+# Example: docker run -v ./config.yaml:/app/config.yaml web2fb
 
 # Run the application
-CMD ["node", "screenshot.js"]
+CMD ["node", "web2fb.js", "--config=/app/config.yaml"]
