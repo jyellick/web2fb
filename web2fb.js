@@ -310,7 +310,11 @@ async function initializeAndRun() {
             baseImageBuffer = pendingBaseTransition.newBaseImageBuffer;
             overlayManager.replaceStates(pendingBaseTransition.newOverlayStates, pendingBaseTransition.newCaches);
 
-            console.log('✓ Base image transition complete - all overlays now use new base');
+            // Write the new full base image to framebuffer (with current overlays composited)
+            const compositedImage = await overlayManager.compositeOntoBase(baseImageBuffer);
+            await framebuffer.writeFull(compositedImage);
+
+            console.log('✓ Base image transition complete - full image written to framebuffer');
             pendingBaseTransition = null;
           }
 
