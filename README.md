@@ -7,9 +7,10 @@ Perfect for kiosk displays, dashboards (DakBoard, HABPanel, Grafana), and any we
 ## ✨ Key Features
 
 - **Direct framebuffer rendering** - No X11/Wayland overhead
+- **Flexible screenshot modes** - Local (Puppeteer) or remote (Cloudflare Worker)
 - **Smart overlay system** - Render dynamic elements locally (clocks update without page re-renders)
 - **Memory optimized** - Runs on devices with 512MB RAM
-- **Auto change detection** - Re-renders only when page content changes
+- **Periodic refresh** - Configurable update intervals
 - **YAML/JSON configuration** - Easy setup for any website
 
 ## 🚀 Quick Start (Raspberry Pi)
@@ -45,16 +46,33 @@ node web2fb.js
 - **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
 - **[Development](docs/development.md)** - Testing, contributing, custom overlays
 
-## 💡 Minimal Configuration
+## 💡 Configuration Examples
 
+**Local Mode (Default)**:
 ```yaml
 display:
   url: https://your-dashboard.com
   width: 1920
   height: 1080
+
+browser:
+  mode: local  # Optional, local is default
 ```
 
-See [examples/](examples/) for complete configurations.
+**Remote Mode (Cloudflare Worker)**:
+```yaml
+display:
+  url: https://your-dashboard.com
+  width: 1920
+  height: 1080
+
+browser:
+  mode: remote
+  remoteScreenshotUrl: https://your-worker.workers.dev
+  remoteApiKey: your-api-key  # Optional but recommended
+```
+
+See [examples/](examples/) and [cloudflare-worker/](cloudflare-worker/) for complete configurations.
 
 ## 🎯 Use Cases
 
@@ -65,9 +83,13 @@ See [examples/](examples/) for complete configurations.
 
 ## 🔧 Key Concepts
 
+**Screenshot Modes**:
+- **Local Mode** (default): Uses Puppeteer with system Chromium. Browser launches fresh for each screenshot to prevent memory leaks.
+- **Remote Mode**: Offloads screenshot capture to Cloudflare Worker. Ideal for very low-power devices or reducing local CPU/memory usage.
+
 **Overlay System**: Hide dynamic elements (like clocks) on the webpage and render them locally. Clock updates every second (~50ms, 110KB) instead of re-rendering the entire page (4MB+).
 
-**Change Detection**: Watches for page content changes (images, backgrounds) and re-renders only when needed. Saves CPU and memory.
+**Periodic Refresh**: Configurable intervals (default 5 minutes) capture new screenshots. Works with or without overlays.
 
 ## 📊 Performance
 
