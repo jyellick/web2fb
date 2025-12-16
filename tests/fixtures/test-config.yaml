@@ -22,7 +22,7 @@ overlays:
       y: 100
       width: 300
       height: 100
-    detectedStyle:
+    style:
       fontSize: 72
       fontFamily: sans-serif
       color: rgb(255, 255, 255)

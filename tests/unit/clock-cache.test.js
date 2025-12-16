@@ -48,23 +48,23 @@ describe('ClockCache', () => {
       expect(cache.overlay).toBe(mockOverlay);
       expect(cache.baseRegionBuffer).toBe(mockBaseRegionBuffer);
       expect(cache.region).toBe(mockRegion);
-      expect(cache.detectedStyle).toEqual({});
+      expect(cache.style).toEqual({});
       expect(cache.frames).toBeInstanceOf(Map);
       expect(cache.frames.size).toBe(0);
       expect(cache.valid).toBe(false);
       expect(cache.windowSize).toBe(10);
     });
 
-    it('should store detected style when provided', () => {
-      const detectedStyle = {
+    it('should store style when provided', () => {
+      const style = {
         fontSize: 48,
         fontWeight: 'bold',
         color: '#ff0000'
       };
 
-      const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion, detectedStyle);
+      const cache = new ClockCache(mockOverlay, mockBaseRegionBuffer, mockRegion, style);
 
-      expect(cache.detectedStyle).toEqual(detectedStyle);
+      expect(cache.style).toEqual(style);
     });
   });
 

@@ -20,14 +20,14 @@ overlays:
     format:
       hour12: false
       showSeconds: true
-    # Run tools/detect-overlays.js to generate region and detectedStyle metadata
+    # Run tools/detect-overlays.js to generate region and style metadata
     # Monitor overlay:total, overlay:generate, and overlay:composite timings
     region:
       x: 50
       y: 50
       width: 200
       height: 60
-    detectedStyle:
+    style:
       fontSize: 48
       fontFamily: monospace
       color: rgb(0, 0, 0)

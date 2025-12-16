@@ -76,7 +76,7 @@
       "description": "Elements to hide and re-render locally for performance",
       "items": {
         "type": "object",
-        "required": ["name", "type", "selector", "region", "detectedStyle"],
+        "required": ["name", "type", "selector", "region", "style"],
         "properties": {
           "name": {
             "type": "string",
@@ -106,18 +106,6 @@
             "type": "object",
             "description": "Formatting options (varies by overlay type)"
           },
-          "style": {
-            "type": "object",
-            "description": "Manual style overrides",
-            "properties": {
-              "fontSize": {"type": "integer"},
-              "fontFamily": {"type": "string"},
-              "color": {"type": "string"},
-              "fontWeight": {"type": "string"},
-              "textAlign": {"type": "string"},
-              "letterSpacing": {"type": "string"}
-            }
-          },
           "text": {
             "type": "string",
             "description": "Static text content (for type: 'text')"
@@ -137,9 +125,9 @@
               "height": {"type": "integer"}
             }
           },
-          "detectedStyle": {
+          "style": {
             "type": "object",
-            "description": "Overlay style detected from page (use tools/detect-overlays.js to generate)",
+            "description": "Overlay style (use tools/detect-overlays.js to generate)",
             "required": ["fontSize", "fontFamily", "color"],
             "properties": {
               "fontSize": {"type": "integer"},

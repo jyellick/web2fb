@@ -22,13 +22,13 @@ overlays:
       minute: 2-digit
       second: 2-digit
       hour12: false
-    # Run tools/detect-overlays.js to generate region and detectedStyle metadata
+    # Run tools/detect-overlays.js to generate region and style metadata
     region:
       x: 100
       y: 50
       width: 300
       height: 80
-    detectedStyle:
+    style:
       fontSize: 64
       fontFamily: sans-serif
       color: rgb(255, 255, 255)
@@ -47,13 +47,13 @@ overlays:
       year: numeric
       month: long
       day: numeric
-    # Run tools/detect-overlays.js to generate region and detectedStyle metadata
+    # Run tools/detect-overlays.js to generate region and style metadata
     region:
       x: 100
       y: 150
       width: 500
       height: 60
-    detectedStyle:
+    style:
       fontSize: 36
       fontFamily: sans-serif
       color: rgb(200, 200, 200)
@@ -69,13 +69,13 @@ overlays:
     updateInterval: 5000
     text: System Online
     # Example of custom static text overlay (disabled)
-    # Run tools/detect-overlays.js to generate region and detectedStyle metadata
+    # Run tools/detect-overlays.js to generate region and style metadata
     region:
       x: 100
       y: 230
       width: 300
       height: 40
-    detectedStyle:
+    style:
       fontSize: 24
       fontFamily: sans-serif
       color: rgb(0, 255, 0)

@@ -192,7 +192,7 @@ async function initializeAndRun() {
         newOverlayStates.set(overlay.name, {
           overlay,
           region: overlay.region,
-          detectedStyle: overlay.detectedStyle,
+          style: overlay.style,
           baseRegionBuffer
         });
 
@@ -225,7 +225,7 @@ async function initializeAndRun() {
           const state = newOverlayStates.get(overlay.name);
           if (!state) continue;
 
-          const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.detectedStyle);
+          const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.style);
           await newCache.preRender(new Date(switchTime), newCache.windowSize);
 
           pendingBaseTransition.newCaches.set(overlay.name, newCache);

@@ -1,6 +1,7 @@
 const { loadConfig } = require('../../lib/config');
 const fs = require('fs');
 const path = require('path');
+const yaml = require('js-yaml');
 
 describe('Example Configurations', () => {
   const examplesDir = path.join(__dirname, '../../examples');
@@ -9,9 +10,9 @@ describe('Example Configurations', () => {
     expect(fs.existsSync(examplesDir)).toBe(true);
   });
 
-  describe('dakboard.json', () => {
+  describe('dakboard.yaml', () => {
     it('should load and validate successfully', () => {
-      const configPath = path.join(examplesDir, 'dakboard.json');
+      const configPath = path.join(examplesDir, 'dakboard.yaml');
 
       expect(fs.existsSync(configPath)).toBe(true);
 
@@ -36,18 +37,11 @@ describe('Example Configurations', () => {
       expect(clockOverlay).toBeDefined();
       expect(clockOverlay.selector).toBe('.time.large');
     });
-
-    it('should have proper schema reference', () => {
-      const configPath = path.join(examplesDir, 'dakboard.json');
-      const content = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-
-      expect(content.$schema).toBe('../config.schema.json');
-    });
   });
 
-  describe('simple.json', () => {
+  describe('simple.yaml', () => {
     it('should load and validate successfully', () => {
-      const configPath = path.join(examplesDir, 'simple.json');
+      const configPath = path.join(examplesDir, 'simple.yaml');
 
       expect(fs.existsSync(configPath)).toBe(true);
 
@@ -61,9 +55,9 @@ describe('Example Configurations', () => {
     });
   });
 
-  describe('multi-overlay.json', () => {
+  describe('multi-overlay.yaml', () => {
     it('should load and validate successfully', () => {
-      const configPath = path.join(examplesDir, 'multi-overlay.json');
+      const configPath = path.join(examplesDir, 'multi-overlay.yaml');
 
       expect(fs.existsSync(configPath)).toBe(true);
 
@@ -83,15 +77,15 @@ describe('Example Configurations', () => {
   });
 
   describe('All Examples', () => {
-    it('should have valid JSON in all example files', () => {
-      const files = fs.readdirSync(examplesDir).filter(f => f.endsWith('.json'));
+    it('should have valid YAML in all example files', () => {
+      const files = fs.readdirSync(examplesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
 
       expect(files.length).toBeGreaterThan(0);
 
       files.forEach(file => {
         const filePath = path.join(examplesDir, file);
         expect(() => {
-          JSON.parse(fs.readFileSync(filePath, 'utf8'));
+          yaml.load(fs.readFileSync(filePath, 'utf8'));
         }).not.toThrow();
       });
     });

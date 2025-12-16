@@ -28,13 +28,13 @@ overlays:
       hour: numeric
       minute: 2-digit
       second: 2-digit
-    # Run tools/detect-overlays.js to generate region and detectedStyle metadata
+    # Run tools/detect-overlays.js to generate region and style metadata
     region:
       x: 100
       y: 100
       width: 300
       height: 100
-    detectedStyle:
+    style:
       fontSize: 72
       fontFamily: Arial, sans-serif
       color: rgb(255, 255, 255)
