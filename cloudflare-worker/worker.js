@@ -98,22 +98,47 @@ export default {
         });
       });
 
+      // Wait for page to be fully stable (no loading indicators, document ready)
+      console.log('Waiting for page to stabilize...');
+      await page.waitForFunction(() => {
+        // Check document is fully loaded
+        if (document.readyState !== 'complete') return false;
+
+        // Check for common loading indicators
+        const loadingElements = document.querySelectorAll(
+          '[class*="loading"], [class*="spinner"], [class*="Loading"], ' +
+          '[aria-busy="true"], [data-loading="true"]'
+        );
+        if (Array.from(loadingElements).some(el => {
+          const style = window.getComputedStyle(el);
+          return style.display !== 'none' && style.visibility !== 'hidden';
+        })) {
+          return false;
+        }
+
+        return true;
+      }, { timeout: 30000 });
+
       // Wait for specific selector(s) if provided
-      // Supports multiple selectors separated by comma (waits for ALL to appear)
+      // Use waitForFunction instead of waitForSelector to avoid Puppeteer internal race conditions
       if (waitForSelector) {
         const selectors = waitForSelector.split(',').map(s => s.trim()).filter(Boolean);
         console.log(`Waiting for ${selectors.length} selector(s): ${selectors.join(', ')}`);
 
-        // Wait for all selectors to appear
-        await Promise.all(
-          selectors.map(selector =>
-            page.waitForSelector(selector, { timeout })
-              .catch(err => {
-                console.error(`Timeout waiting for selector '${selector}':`, err.message);
-                throw new Error(`Selector not found: ${selector}`);
-              })
-          )
-        );
+        // Wait for all selectors using waitForFunction (more reliable than waitForSelector)
+        await page.waitForFunction((selectorList) => {
+          return selectorList.every(selector => {
+            const element = document.querySelector(selector);
+            if (!element) return false;
+
+            // Ensure element is visible
+            const style = window.getComputedStyle(element);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+          });
+        }, { timeout }, selectors).catch(err => {
+          console.error(`Timeout waiting for selectors:`, err.message);
+          throw new Error(`Selectors not found: ${selectors.join(', ')}`);
+        });
 
         console.log('All selectors found');
       }
