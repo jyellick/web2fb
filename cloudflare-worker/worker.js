@@ -98,10 +98,24 @@ export default {
         });
       });
 
-      // Wait for specific selector if provided
+      // Wait for specific selector(s) if provided
+      // Supports multiple selectors separated by comma (waits for ALL to appear)
       if (waitForSelector) {
-        console.log(`Waiting for selector: ${waitForSelector}`);
-        await page.waitForSelector(waitForSelector, { timeout });
+        const selectors = waitForSelector.split(',').map(s => s.trim()).filter(Boolean);
+        console.log(`Waiting for ${selectors.length} selector(s): ${selectors.join(', ')}`);
+
+        // Wait for all selectors to appear
+        await Promise.all(
+          selectors.map(selector =>
+            page.waitForSelector(selector, { timeout })
+              .catch(err => {
+                console.error(`Timeout waiting for selector '${selector}':`, err.message);
+                throw new Error(`Selector not found: ${selector}`);
+              })
+          )
+        );
+
+        console.log('All selectors found');
       }
 
       // Wait for images to load (DakBoard-specific)

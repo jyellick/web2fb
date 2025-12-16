@@ -73,7 +73,7 @@
         },
         "waitForSelector": {
           "type": "string",
-          "description": "CSS selector to wait for before taking screenshot (indicates page is ready)"
+          "description": "CSS selector(s) to wait for before taking screenshot. Supports multiple selectors separated by commas (waits for ALL to appear). Example: '.today, .photo-group-1-photo'"
         },
         "waitForNetworkIdle": {
           "type": "boolean",

@@ -44,17 +44,24 @@ browser:
 **Pros:** Simple, catches everything
 **Cons:** Always waits full time, even if page loads faster
 
-## Strategy 2: Wait for Specific Element
+## Strategy 2: Wait for Specific Element(s)
 
+**Single selector:**
 ```yaml
 browser:
   waitForSelector: '.calendar-grid'  # Wait for calendar to appear
 ```
 
-**Use when:** Page has a reliable "ready" indicator
-**Execution:** Waits for selector to appear BEFORE checking images
-**Pros:** Precise, doesn't waste time
-**Cons:** Requires knowing the right selector
+**Multiple selectors (waits for ALL to appear):**
+```yaml
+browser:
+  waitForSelector: '.today, .photo-group-1-photo'  # Wait for both calendar AND photo
+```
+
+**Use when:** Page has reliable "ready" indicator(s)
+**Execution:** Waits for selector(s) to appear BEFORE checking images
+**Pros:** Precise, doesn't waste time, can ensure multiple elements loaded
+**Cons:** Requires knowing the right selector(s)
 
 ## Strategy 3: Stricter Network Idle
 
@@ -113,6 +120,17 @@ browser:
 
 ## Recommended Starting Point for DakBoard
 
+**Option 1: Wait for specific elements (most precise)**
+```yaml
+browser:
+  mode: remote
+  remoteScreenshotUrl: https://your-worker.workers.dev
+  remoteApiKey: your-key
+  remoteTimeout: 60000
+  waitForSelector: '.today, .photo-group-1-photo'  # Wait for calendar and photo
+```
+
+**Option 2: Simple delay (most reliable)**
 ```yaml
 browser:
   mode: remote
@@ -122,11 +140,19 @@ browser:
   waitDelay: 3000  # 3 seconds after images load
 ```
 
+**Option 3: Combine both for maximum reliability**
+```yaml
+browser:
+  waitForSelector: '.today, .photo-group-1-photo'  # Wait for elements
+  waitDelay: 2000  # Plus 2 second buffer
+```
+
 If that's not enough, try:
 ```yaml
 browser:
   waitForNetworkIdle: true  # Stricter
-  waitDelay: 5000           # Longer delay
+  waitForSelector: '.today, .photo-group-1-photo'
+  waitDelay: 3000
 ```
 
 ## Debugging
