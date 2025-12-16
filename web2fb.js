@@ -247,28 +247,16 @@ async function initializeAndRun() {
     }
   };
 
-  // Set up change detection (only if provider supports it)
-  if (screenshotProvider.supportsChangeDetection()) {
-    if (config.changeDetection !== false) {
-      await screenshotProvider.setupChangeDetection(async () => {
-        console.log('Page change detected');
-        await recaptureBaseImage('page changed');
-      });
-    }
-  } else {
-    if (config.changeDetection !== false) {
-      console.log('⚠️  Change detection disabled (not supported by screenshot provider)');
-    }
-  }
+  // Set up periodic refresh (mandatory)
+  // Browser starts fresh for each screenshot, preventing memory leaks and cache growth
+  const refreshInterval = config.refreshInterval || 300000; // Default 5 minutes
+  console.log(`Setting up periodic refresh every ${refreshInterval}ms`);
+  console.log('Browser will start fresh for each screenshot (no long-running processes)');
 
-  // Set up periodic refresh (useful for remote mode or when change detection is disabled)
-  if (config.refreshInterval && config.refreshInterval > 0) {
-    console.log(`Setting up periodic refresh every ${config.refreshInterval}ms`);
-    const refreshIntervalId = setInterval(async () => {
-      await recaptureBaseImage('periodic refresh');
-    }, config.refreshInterval);
-    intervals.push(refreshIntervalId);
-  }
+  const refreshIntervalId = setInterval(async () => {
+    await recaptureBaseImage('periodic refresh');
+  }, refreshInterval);
+  intervals.push(refreshIntervalId);
 
   // Track in-progress updates per overlay (drop-frame behavior)
   const overlayUpdateInProgress = new Map();

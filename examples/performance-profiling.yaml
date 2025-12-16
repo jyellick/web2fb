@@ -35,4 +35,5 @@ overlays:
       textAlign: left
       letterSpacing: normal
 
-changeDetection: true
+# Refresh base image every 2 minutes (for performance testing)
+refreshInterval: 120000

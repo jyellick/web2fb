@@ -42,10 +42,7 @@ overlays:
       textAlign: center
       letterSpacing: normal
 
-# Change detection not supported in remote mode
-changeDetection: false
-
-# Refresh base image every 5 minutes (300000ms)
+# Refresh base image every 5 minutes
 # Adjust based on how frequently your dashboard content changes
 refreshInterval: 300000
 

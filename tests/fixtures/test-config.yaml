@@ -30,4 +30,4 @@ overlays:
       textAlign: center
       letterSpacing: normal
 
-changeDetection: true
+refreshInterval: 300000

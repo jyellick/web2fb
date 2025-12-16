@@ -37,6 +37,7 @@ overlays:
       textAlign: center
       letterSpacing: normal
 
-changeDetection: true
+# Refresh base image every 5 minutes (adjust based on how often your dashboard updates)
+refreshInterval: 300000
 
 splashScreen: splash.png

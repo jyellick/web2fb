@@ -60,7 +60,6 @@ describe('Config Loading', () => {
       expect(config.display.height).toBe(1080);
       expect(config.display.framebufferDevice).toBe('/dev/fb0');
       expect(config.browser.mode).toBe('local');
-      expect(config.changeDetection).toBe(true);
     });
 
     it('should handle PUPPETEER_EXECUTABLE_PATH env var', () => {
@@ -92,11 +91,12 @@ describe('Config Loading', () => {
       expect(config.overlays).toEqual([]);
     });
 
-    it('should default changeDetection to true', () => {
+    it('should use default refreshInterval if not specified', () => {
       const configPath = path.join(__dirname, '../fixtures/minimal-config.json');
       const config = loadConfig(configPath);
 
-      expect(config.changeDetection).toBe(true);
+      // Default is set in web2fb.js if not in config
+      expect(config.refreshInterval).toBeUndefined();
     });
   });
 
