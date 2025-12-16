@@ -1,0 +1,38 @@
+# Performance Profiling Example
+# Configuration for profiling web2fb performance on resource-constrained hardware
+# Run with: DEBUG=1 node web2fb.js --config=examples/performance-profiling.yaml
+
+name: Performance Profiling Example
+description: Configuration for profiling web2fb performance on resource-constrained hardware
+
+display:
+  url: https://example.com
+  width: 800
+  height: 480
+  framebufferDevice: /dev/fb0
+
+overlays:
+  - name: clock
+    type: clock
+    selector: '#clock'
+    enabled: true
+    updateInterval: 1000
+    format:
+      hour12: false
+      showSeconds: true
+    # Run tools/detect-overlays.js to generate region and detectedStyle metadata
+    # Monitor overlay:total, overlay:generate, and overlay:composite timings
+    region:
+      x: 50
+      y: 50
+      width: 200
+      height: 60
+    detectedStyle:
+      fontSize: 48
+      fontFamily: monospace
+      color: rgb(0, 0, 0)
+      fontWeight: normal
+      textAlign: left
+      letterSpacing: normal
+
+changeDetection: true

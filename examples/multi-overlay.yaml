@@ -1,0 +1,86 @@
+# Multi-Overlay Display
+# Example showing multiple overlay elements (clock, date, custom text)
+
+name: Multi-Overlay Display
+description: Example showing multiple overlay elements (clock, date, custom text)
+
+display:
+  url: https://example.com/dashboard
+  width: 1920
+  height: 1080
+  framebufferDevice: /dev/fb0
+
+overlays:
+  # Clock overlay - updates every second
+  - name: clock
+    type: clock
+    selector: .clock
+    enabled: true
+    updateInterval: 1000
+    format:
+      hour: 2-digit
+      minute: 2-digit
+      second: 2-digit
+      hour12: false
+    # Run tools/detect-overlays.js to generate region and detectedStyle metadata
+    region:
+      x: 100
+      y: 50
+      width: 300
+      height: 80
+    detectedStyle:
+      fontSize: 64
+      fontFamily: sans-serif
+      color: rgb(255, 255, 255)
+      fontWeight: bold
+      textAlign: center
+      letterSpacing: normal
+
+  # Date overlay - updates every minute
+  - name: date
+    type: date
+    selector: .date
+    enabled: true
+    updateInterval: 60000
+    format:
+      weekday: long
+      year: numeric
+      month: long
+      day: numeric
+    # Run tools/detect-overlays.js to generate region and detectedStyle metadata
+    region:
+      x: 100
+      y: 150
+      width: 500
+      height: 60
+    detectedStyle:
+      fontSize: 36
+      fontFamily: sans-serif
+      color: rgb(200, 200, 200)
+      fontWeight: normal
+      textAlign: center
+      letterSpacing: normal
+
+  # Custom text overlay - disabled by default
+  - name: custom-text
+    type: text
+    selector: .status
+    enabled: false
+    updateInterval: 5000
+    text: System Online
+    # Example of custom static text overlay (disabled)
+    # Run tools/detect-overlays.js to generate region and detectedStyle metadata
+    region:
+      x: 100
+      y: 230
+      width: 300
+      height: 40
+    detectedStyle:
+      fontSize: 24
+      fontFamily: sans-serif
+      color: rgb(0, 255, 0)
+      fontWeight: normal
+      textAlign: left
+      letterSpacing: normal
+
+changeDetection: true

@@ -1,0 +1,33 @@
+# Test configuration in YAML format
+name: Test Config
+description: YAML test configuration
+
+display:
+  url: https://example.com
+  width: 1920
+  height: 1080
+  framebufferDevice: /dev/fb0
+
+browser:
+  mode: local
+
+overlays:
+  - name: clock
+    type: clock
+    selector: .clock
+    enabled: true
+    updateInterval: 1000
+    region:
+      x: 100
+      y: 100
+      width: 300
+      height: 100
+    detectedStyle:
+      fontSize: 72
+      fontFamily: sans-serif
+      color: rgb(255, 255, 255)
+      fontWeight: normal
+      textAlign: center
+      letterSpacing: normal
+
+changeDetection: true

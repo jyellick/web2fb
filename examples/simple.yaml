@@ -1,0 +1,15 @@
+# Simple Web Display
+# Basic configuration for displaying any webpage to framebuffer
+
+name: Simple Web Display
+description: Basic configuration for displaying any webpage to framebuffer
+
+display:
+  url: https://example.com
+  width: 1920
+  height: 1080
+  framebufferDevice: /dev/fb0
+
+overlays: []
+
+changeDetection: true

@@ -18,13 +18,25 @@ describe('Config Loading', () => {
   });
 
   describe('loadConfig', () => {
-    it('should load config from file', () => {
+    it('should load config from JSON file', () => {
       const configPath = path.join(__dirname, '../fixtures/test-config.json');
       const config = loadConfig(configPath);
 
       expect(config).toBeDefined();
       expect(config.display).toBeDefined();
       expect(config.display.url).toBe('https://example.com');
+    });
+
+    it('should load config from YAML file', () => {
+      const configPath = path.join(__dirname, '../fixtures/test-config.yaml');
+      const config = loadConfig(configPath);
+
+      expect(config).toBeDefined();
+      expect(config.display).toBeDefined();
+      expect(config.display.url).toBe('https://example.com');
+      expect(config.name).toBe('Test Config');
+      expect(config.overlays).toHaveLength(1);
+      expect(config.overlays[0].name).toBe('clock');
     });
 
     it('should merge environment variables', () => {
@@ -47,8 +59,8 @@ describe('Config Loading', () => {
       expect(config.display.width).toBe(1920);
       expect(config.display.height).toBe(1080);
       expect(config.display.framebufferDevice).toBe('/dev/fb0');
-      expect(config.browser.timeout).toBe(180000);
-      expect(config.browser.disableAnimations).toBe(true);
+      expect(config.browser.mode).toBe('local');
+      expect(config.changeDetection).toBe(true);
     });
 
     it('should handle PUPPETEER_EXECUTABLE_PATH env var', () => {
@@ -80,13 +92,11 @@ describe('Config Loading', () => {
       expect(config.overlays).toEqual([]);
     });
 
-    it('should set default change detection values', () => {
+    it('should default changeDetection to true', () => {
       const configPath = path.join(__dirname, '../fixtures/minimal-config.json');
       const config = loadConfig(configPath);
 
-      expect(config.changeDetection.enabled).toBe(true);
-      expect(config.changeDetection.periodicCheckInterval).toBe(120000);
-      expect(config.changeDetection.debounceDelay).toBe(500);
+      expect(config.changeDetection).toBe(true);
     });
   });
 

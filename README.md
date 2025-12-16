@@ -8,10 +8,9 @@ Perfect for kiosk displays, dashboards (DakBoard, HABPanel, Grafana), and any we
 
 - **Direct framebuffer rendering** - No X11/Wayland overhead
 - **Smart overlay system** - Render dynamic elements locally (clocks update without page re-renders)
-- **Stress management** - Intelligent throttling prevents crashes on constrained hardware
 - **Memory optimized** - Runs on devices with 512MB RAM
 - **Auto change detection** - Re-renders only when page content changes
-- **JSON configuration** - Easy setup for any website
+- **YAML/JSON configuration** - Easy setup for any website
 
 ## 🚀 Quick Start (Raspberry Pi)
 
@@ -29,8 +28,8 @@ npm install
 echo "PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium" > .env
 
 # 4. Create config
-cp examples/dakboard.json config.json
-nano config.json  # Update URL to your dashboard
+cp examples/dakboard.yaml config.yaml
+nano config.yaml  # Update URL to your dashboard
 
 # 5. Run
 node web2fb.js
@@ -42,21 +41,17 @@ node web2fb.js
 - **[Configuration Reference](docs/configuration.md)** - Complete config options and examples
 - **[Running as Service](docs/systemd.md)** - Production systemd setup
 - **[Overlay System](docs/overlays.md)** - Local rendering for clocks, dates, custom elements
-- **[Stress Management](docs/stress-management.md)** - Memory protection for constrained hardware
 - **[Performance Profiling](docs/performance-profiling.md)** - Identify bottlenecks and optimize performance
 - **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
 - **[Development](docs/development.md)** - Testing, contributing, custom overlays
 
 ## 💡 Minimal Configuration
 
-```json
-{
-  "display": {
-    "url": "https://your-dashboard.com",
-    "width": 1920,
-    "height": 1080
-  }
-}
+```yaml
+display:
+  url: https://your-dashboard.com
+  width: 1920
+  height: 1080
 ```
 
 See [examples/](examples/) for complete configurations.
@@ -71,8 +66,6 @@ See [examples/](examples/) for complete configurations.
 ## 🔧 Key Concepts
 
 **Overlay System**: Hide dynamic elements (like clocks) on the webpage and render them locally. Clock updates every second (~50ms, 110KB) instead of re-rendering the entire page (4MB+).
-
-**Stress Management**: Monitors system load and intelligently throttles operations. Prioritizes user-visible updates (overlays) over background operations (page re-renders). Automatically restarts browser before system crashes.
 
 **Change Detection**: Watches for page content changes (images, backgrounds) and re-renders only when needed. Saves CPU and memory.
 
@@ -109,7 +102,7 @@ See [systemd documentation](docs/systemd.md) for complete setup and configuratio
 npm run dev
 
 # In another terminal, run web2fb
-FRAMEBUFFER_DEVICE=test-fb/fb0 node web2fb.js --config=examples/dakboard.json
+FRAMEBUFFER_DEVICE=test-fb/fb0 node web2fb.js --config=examples/dakboard.yaml
 
 # Open http://localhost:3000 to view output
 ```

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "web2fb Configuration",
-  "description": "Configuration schema for web2fb - Web to Framebuffer Renderer",
+  "description": "Configuration schema for web2fb - Web to Framebuffer Renderer. Supports both YAML (.yaml/.yml) and JSON (.json) formats.",
   "type": "object",
   "required": ["display"],
   "properties": {
