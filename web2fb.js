@@ -181,7 +181,7 @@ async function initializeAndRun() {
         throw new Error(`Sharp cannot process screenshot buffer: ${err.message}`);
       }
 
-      // Extract new base regions (but don't replace current ones yet)
+      // Extract new base regions as raw pixels (faster than PNG encoding)
       const newOverlayStates = new Map();
 
       for (const overlay of enabledOverlays) {
@@ -190,6 +190,7 @@ async function initializeAndRun() {
         const extractOpId = perfMonitor.start('baseImage:extractRegion', { name: overlay.name });
 
         try {
+          // Extract as raw pixels - faster, no compression overhead
           const baseRegionBuffer = await sharp(newBaseImageBuffer)
             .extract({
               left: overlay.region.x,
@@ -197,14 +198,20 @@ async function initializeAndRun() {
               width: overlay.region.width,
               height: overlay.region.height
             })
-            .png()
+            .ensureAlpha() // Ensure consistent 4-channel RGBA format
+            .raw()
             .toBuffer();
 
           newOverlayStates.set(overlay.name, {
             overlay,
             region: overlay.region,
             style: overlay.style,
-            baseRegionBuffer
+            baseRegionBuffer,
+            rawMetadata: {
+              width: overlay.region.width,
+              height: overlay.region.height,
+              channels: 4 // Always RGBA after ensureAlpha()
+            }
           });
 
           perfMonitor.end(extractOpId);
@@ -245,7 +252,7 @@ async function initializeAndRun() {
           const state = newOverlayStates.get(overlay.name);
           if (!state) continue;
 
-          const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.style);
+          const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.style, state.rawMetadata);
           await newCache.preRender(new Date(switchTime), newCache.windowSize);
 
           pendingBaseTransition.newCaches.set(overlay.name, newCache);
