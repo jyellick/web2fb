@@ -197,7 +197,7 @@ async function initializeAndRun() {
               width: overlay.region.width,
               height: overlay.region.height
             })
-            .raw()
+            .png()
             .toBuffer();
 
           newOverlayStates.set(overlay.name, {
