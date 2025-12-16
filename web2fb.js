@@ -261,6 +261,15 @@ async function initializeAndRun() {
     }
   }
 
+  // Set up periodic refresh (useful for remote mode or when change detection is disabled)
+  if (config.refreshInterval && config.refreshInterval > 0) {
+    console.log(`Setting up periodic refresh every ${config.refreshInterval}ms`);
+    const refreshIntervalId = setInterval(async () => {
+      await recaptureBaseImage('periodic refresh');
+    }, config.refreshInterval);
+    intervals.push(refreshIntervalId);
+  }
+
   // Track in-progress updates per overlay (drop-frame behavior)
   const overlayUpdateInProgress = new Map();
 

@@ -22,4 +22,7 @@ overlays: []
 # Change detection not supported in remote mode
 changeDetection: false
 
+# Refresh base image every 10 minutes (600000ms)
+refreshInterval: 600000
+
 splashScreen: splash.png

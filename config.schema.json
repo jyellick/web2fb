@@ -146,6 +146,12 @@
       "description": "Enable automatic change detection (watches for image/background changes). Only supported with local browser mode.",
       "default": true
     },
+    "refreshInterval": {
+      "type": "integer",
+      "description": "Interval in milliseconds to periodically refresh the base image. Useful for remote mode where change detection is not supported. Set to 0 to disable periodic refresh.",
+      "default": 0,
+      "minimum": 0
+    },
     "splashScreen": {
       "type": "string",
       "description": "Path to splash screen image to show during startup. Performance monitoring can be enabled with DEBUG=1 environment variable."

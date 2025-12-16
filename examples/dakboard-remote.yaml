@@ -45,4 +45,8 @@ overlays:
 # Change detection not supported in remote mode
 changeDetection: false
 
+# Refresh base image every 5 minutes (300000ms)
+# Adjust based on how frequently your dashboard content changes
+refreshInterval: 300000
+
 splashScreen: splash.png
