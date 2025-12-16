@@ -65,6 +65,21 @@
           "default": 60000,
           "minimum": 5000
         },
+        "waitDelay": {
+          "type": "integer",
+          "description": "Additional milliseconds to wait after page load before screenshot (for async content)",
+          "default": 0,
+          "minimum": 0
+        },
+        "waitForSelector": {
+          "type": "string",
+          "description": "CSS selector to wait for before taking screenshot (indicates page is ready)"
+        },
+        "waitForNetworkIdle": {
+          "type": "boolean",
+          "description": "Wait for network to be idle before taking screenshot",
+          "default": false
+        },
         "userAgent": {
           "type": "string",
           "description": "Custom user agent string"
