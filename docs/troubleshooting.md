@@ -2,6 +2,87 @@
 
 Common issues and solutions.
 
+## Screenshot Issues
+
+### Local Mode: "Unable to capture screenshot"
+
+**Error**: `Protocol error (Page.captureScreenshot): Unable to capture screenshot`
+
+**Symptoms**: Browser launches successfully, page loads, but screenshot fails
+
+**Common Causes**:
+1. **Stale Chrome processes** - Previous Chrome instances still running
+2. **Missing environment variable** - `PUPPETEER_EXECUTABLE_PATH` not set
+3. **.env file not loaded** - dotenv not configured
+
+**Solutions**:
+```bash
+# 1. Restart the Pi to clear stale processes
+sudo reboot
+
+# 2. Ensure .env file exists and contains:
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# 3. For systemd service, add to service file:
+[Service]
+Environment="PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium"
+
+# 4. Verify Chrome can be found:
+which chromium
+```
+
+### Remote Mode: Not Receiving Screenshots
+
+**Symptoms**: Worker responds but returns errors or empty response
+
+**Check**:
+```bash
+# Test worker directly:
+curl "https://your-worker.workers.dev?url=https://example.com&width=1920&height=1080"
+```
+
+**Solutions**:
+1. **Check API key** - Ensure `remoteApiKey` matches worker's `API_KEY` secret
+2. **Check worker logs** - View logs in Cloudflare dashboard
+3. **Test wait strategies** - Try adding `waitDelay` or `waitForSelector`
+4. **Verify worker deployment** - Check `wrangler.toml` bindings
+
+See [cloudflare-worker/WAIT-STRATEGIES.md](../cloudflare-worker/WAIT-STRATEGIES.md) for detailed troubleshooting.
+
+### Page Shows "Loading..." in Screenshot
+
+**Symptoms**: Screenshot captured too early, before content loads
+
+**Solutions**:
+```yaml
+browser:
+  # Option 1: Wait for specific element(s)
+  waitForSelector: ".content-loaded, .today"
+
+  # Option 2: Add fixed delay
+  waitDelay: 3000  # 3 seconds
+
+  # Option 3: Wait for network idle (stricter)
+  waitForNetworkIdle: true
+```
+
+### Screen Not Updating Periodically
+
+**Symptoms**: Initial screenshot displays, but no periodic updates
+
+**Cause**: Without overlays, periodic refresh may not be writing to framebuffer
+
+**Check**:
+```bash
+# View logs to see if screenshots are being captured:
+sudo journalctl -u web2fb.service -f | grep "Screenshot captured"
+```
+
+**Solution**: This should be fixed in recent versions. If still occurring:
+1. Verify `refreshInterval` is set (default: 300000 ms = 5 minutes)
+2. Check logs show "Writing updated base image to framebuffer"
+3. Update to latest version
+
 ## Installation Issues
 
 ### Chromium Not Found
@@ -205,61 +286,37 @@ sudo update-ca-certificates
 **Symptoms**: System sluggish, out of memory errors
 
 **Solutions**:
-1. **Enable stress management** (on by default)
+1. **Use remote mode** - Offload browser rendering to Cloudflare Worker
 2. **Lower resolution**:
-   ```json
-   {
-     "display": {
-       "width": 1280,
-       "height": 720
-     }
-   }
+   ```yaml
+   display:
+     width: 1280
+     height: 720
    ```
-3. **Disable GUI**:
+3. **Increase refresh interval**:
+   ```yaml
+   refreshInterval: 600000  # 10 minutes instead of 5
+   ```
+4. **Disable GUI**:
    ```bash
    sudo raspi-config
    # System Options → Boot → Console
    ```
-4. **Disable getty**:
+5. **Disable getty**:
    ```bash
    sudo systemctl disable getty@tty1.service
    ```
 
-### Frequent Browser Restarts
-
-**Symptoms**: Logs show frequent "Restarting browser"
-
-**Check**:
-```bash
-# View restart causes
-sudo journalctl -u web2fb.service | grep "Restarting browser"
-```
-
-**Solutions**:
-1. **Increase thresholds**:
-   ```json
-   {
-     "stressManagement": {
-       "thresholds": {
-         "baseImageCritical": 20000
-       },
-       "recovery": {
-         "killBrowserThreshold": 5
-       }
-     }
-   }
-   ```
-2. **Reduce page complexity**
-3. **Lower resolution**
-4. **Increase change detection interval**
-
 ### Clock Jumping Multiple Times
 
-**Issue**: Clock updates skip seconds (e.g., 12:00:03 → 12:00:07)
+**Issue**: Clock overlay updates skip seconds (e.g., 12:00:03 → 12:00:07)
 
-**Cause**: System is falling behind, updates are queuing
+**Cause**: System is overloaded, updates are queuing
 
-**Solution**: Drop-frame behavior is enabled by default. If still occurring, system is severely stressed - see stress management tuning above.
+**Solution**: Drop-frame behavior is enabled by default. If still occurring:
+1. Use remote mode to reduce CPU/memory load
+2. Reduce number of overlays
+3. Increase overlay `updateInterval` to 2000ms or higher
 
 ## Display Issues
 
@@ -342,4 +399,5 @@ If you're still stuck:
 
 - [Installation Guide](installation.md)
 - [Configuration Reference](configuration.md)
-- [Stress Management](stress-management.md)
+- [Overlay System](overlays.md)
+- [Cloudflare Worker Wait Strategies](../cloudflare-worker/WAIT-STRATEGIES.md)
