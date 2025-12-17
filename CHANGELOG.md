@@ -7,31 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Stress management system with progressive throttling (NORMAL → MILD → MODERATE → SEVERE)
-- In-process browser restart on severe stress (no process exit needed)
-- Critical event decay - old stress events forgiven when system runs smoothly
-- Drop-frame behavior for overlay updates - prevents clock "jumping"
-- Chrome profile size monitoring (tmpfs/RAM-backed on Pi)
-- Configurable profile size threshold (default 40MB)
-- Development server for testing without Pi hardware
-- Comprehensive documentation structure (docs/ folder)
-- GitHub Actions CI/CD with Node 18/20/22 testing
-- Example systemd service file
-- Chrome profile cleanup utility
+### Major Changes (v2.0.0)
+
+#### Architecture Overhaul
+- **Screenshot Provider Abstraction** - Pluggable system for local vs remote screenshot acquisition
+- **Local Mode** (default) - Fresh browser launch per screenshot, prevents memory leaks
+- **Remote Mode** - Offload screenshot capture to Cloudflare Worker
+- **Removed Change Detection** - Simplified to periodic refresh (configurable interval)
+- **Removed Stress Management** - No longer needed with fresh browser approach
+
+#### New Features
+- **YAML Configuration** - Primary config format (JSON still supported)
+- **Dotenv Support** - Load environment variables from .env file
+- **Wait Strategies** - Configurable page load timing (waitForSelector, waitDelay, waitForNetworkIdle)
+- **Cloudflare Worker** - Complete worker implementation for remote screenshots
+- **Periodic Refresh** - Works with or without overlays (5 minute default)
+- **Docker Support** - Updated Dockerfile for new architecture
+
+#### Configuration Changes
+- `browser.mode` - New: "local" (default) or "remote"
+- `browser.remoteScreenshotUrl` - New: Cloudflare Worker URL
+- `browser.remoteApiKey` - New: API key for worker authentication
+- `browser.waitDelay` - New: Additional wait after page load
+- `browser.waitForSelector` - New: Wait for specific element(s)
+- `browser.waitForNetworkIdle` - New: Wait for network idle
+- `refreshInterval` - Replaces change detection configuration
+- Removed `changeDetection` configuration section
+- Removed `stressManagement` configuration section
+
+#### Bug Fixes
+- **Intermittent Screenshot Failures** - Fixed by removing temporary Chrome profiles
+- **No Periodic Updates Without Overlays** - Fixed transition logic
+- **Stale Chrome Processes** - Eliminated by fresh browser per screenshot
+- **Missing Environment Variables** - Added dotenv support
+
+#### Documentation
+- Complete rewrite of configuration.md for local/remote modes
+- Updated troubleshooting.md with recent debugging insights
+- Removed duplicate SYSTEMD_SETUP.md (consolidated to docs/systemd.md)
+- Updated README.md with screenshot mode examples
+- Added cloudflare-worker/WAIT-STRATEGIES.md
+- All documentation now reflects current architecture
+
+#### Development
+- Removed obsolete screenshot.js (replaced by screenshot-providers.js)
+- All tests passing (93 tests)
+- No TODO/FIXME comments in codebase
+- Clean, maintainable code structure
 
 ### Changed
-- Restructured documentation - streamlined README with detailed guides
-- README reduced from 740+ to ~120 lines
-- Package.json completed with repository URLs and metadata
-- Buffer pooling now uses subarray() instead of slice() for true reuse
-- All intervals tracked and cleared on exit
-
-### Fixed
-- Memory leak from uncleared setInterval calls
-- RGB565 buffer pooling creating copies instead of reusing
-- Periodic check timer now resets when mutation-triggered update occurs
-- Snapshot strings in change detection now limited to prevent unbounded growth
+- Browser launches fresh for each screenshot instead of staying alive
+- Simplified to periodic refresh model (no complex change detection)
+- Configuration now primarily YAML (JSON still supported)
+- Local mode no longer creates temporary Chrome profiles
+- 2-second re-render delay (increased from 500ms)
 
 ## [1.0.0] - Initial Release
 
