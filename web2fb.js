@@ -254,7 +254,14 @@ async function initializeAndRun() {
         // Mark pending full update (will execute when cache extends to render next frame)
         pendingFullUpdate = { baseImageBuffer };
 
-        console.log(`✓ Transition prepared - full update will occur at next cache extension (~${overlayManager.clockCaches.values().next().value?.windowSize || 10}s ahead)`);
+        const cache = overlayManager.clockCaches.values().next().value;
+        const currentSecond = Math.floor(Date.now() / 1000);
+        console.log(`✓ Transition prepared - NO framebuffer write yet`);
+        console.log(`  Current time: ${new Date().toISOString()}`);
+        console.log(`  Current second: ${currentSecond}`);
+        console.log(`  Cache window: ${cache?.windowStart} to ${cache?.windowEnd}`);
+        console.log(`  Frames ahead: ${cache ? cache.windowEnd - currentSecond + 1 : 'N/A'}`);
+        console.log(`  Full update will occur when cache extends to next frame`);
       }
 
       perfMonitor.end(perfOpId, { success: true, duration });
@@ -308,14 +315,22 @@ async function initializeAndRun() {
 
           if (isTransitionPoint) {
             // This is the first unrendered frame
+            const now = new Date();
+            const currentSecond = Math.floor(now.getTime() / 1000);
             console.log(`\n🔄 Cache extension triggered - overlay '${overlay.name}' needs next frame with new base`);
+            console.log(`  Time: ${now.toISOString()}`);
+            console.log(`  Current second: ${currentSecond}`);
+            console.log(`  Cache window before extend: ${cache.windowStart} to ${cache.windowEnd}`);
 
             // First, let the cache extend to render the new frame with new base
-            await cache.extendWindow(1, new Date());
-            console.log('✓ New frame rendered with new base');
+            await cache.extendWindow(1, now);
+            console.log(`✓ New frame rendered with new base`);
+            console.log(`  Cache window after extend: ${cache.windowStart} to ${cache.windowEnd}`);
 
             // Now do FULL update with the newly-rendered frame
+            console.log(`  Compositing all overlays onto new base...`);
             const compositedImage = await overlayManager.compositeOntoBase(baseImageBuffer);
+            console.log(`  Writing FULL framebuffer update...`);
             await framebuffer.writeFull(compositedImage);
 
             console.log('✓ Full update complete - new base displayed with newly-rendered overlay');
