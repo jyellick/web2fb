@@ -307,14 +307,18 @@ async function initializeAndRun() {
           const isTransitionPoint = pendingFullUpdate && cache && cache.needsMoreFrames();
 
           if (isTransitionPoint) {
-            // This is the first unrendered frame - do FULL update with new base
-            console.log(`\n🔄 Cache extension triggered - executing full update with new base for overlay '${overlay.name}'`);
+            // This is the first unrendered frame
+            console.log(`\n🔄 Cache extension triggered - overlay '${overlay.name}' needs next frame with new base`);
 
-            // Composite current overlays onto new base and write full image
+            // First, let the cache extend to render the new frame with new base
+            await cache.extendWindow(1, new Date());
+            console.log('✓ New frame rendered with new base');
+
+            // Now do FULL update with the newly-rendered frame
             const compositedImage = await overlayManager.compositeOntoBase(baseImageBuffer);
             await framebuffer.writeFull(compositedImage);
 
-            console.log('✓ Full update complete - new base with first newly-rendered overlay frame');
+            console.log('✓ Full update complete - new base displayed with newly-rendered overlay');
             pendingFullUpdate = null; // Clear pending flag
           } else {
             // Normal partial update
