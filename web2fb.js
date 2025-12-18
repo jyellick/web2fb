@@ -18,8 +18,9 @@ const { loadConfig, getEnabledOverlays } = require('./lib/config');
 const { createScreenshotProvider } = require('./lib/screenshot-providers');
 const PerfMonitor = require('./lib/perf-monitor');
 const Framebuffer = require('./lib/framebuffer');
-const OverlayManager = require('./lib/overlay-manager');
-const ClockCache = require('./lib/clock-cache');
+const FramebufferQueue = require('./lib/framebuffer-queue');
+const FramebufferRenderer = require('./lib/framebuffer-renderer');
+const DisplayScheduler = require('./lib/display-scheduler');
 
 // Get current git commit hash
 function getGitCommit() {
@@ -58,11 +59,14 @@ console.log('='.repeat(60));
 // Global state
 let screenshotProvider = null;
 let framebuffer = null;
-let overlayManager = null;
 let baseImageBuffer = null;
+let overlayStates = new Map(); // name -> { overlay, region, style, baseRegionBuffer, rawMetadata }
+let queue = null;
+let renderer = null;
+let scheduler = null;
 let intervals = [];
-let overlayTimeouts = new Map();
-let pendingFullUpdate = null; // { baseImageBuffer } - set when new base ready, cleared after full update
+let queueMaintainerRunning = false;
+let nextFullUpdateSecond = null; // Second when next full update should occur
 
 /**
  * Restart screenshot provider (browser crashed or profile too large)
@@ -73,15 +77,29 @@ async function restartProvider(reason) {
   console.log('='.repeat(60));
 
   try {
-    // Clear all intervals and timeouts
-    console.log(`Clearing ${intervals.length} interval(s) and ${overlayTimeouts.size} timeout(s)...`);
+    // Stop scheduler
+    if (scheduler) {
+      scheduler.stop();
+      scheduler = null;
+    }
+
+    // Clear queue
+    if (queue) {
+      queue.clear();
+      queue = null;
+    }
+
+    // Stop queue maintainer
+    queueMaintainerRunning = false;
+
+    // Clear all intervals
+    console.log(`Clearing ${intervals.length} interval(s)...`);
     intervals.forEach(id => clearInterval(id));
     intervals = [];
-    overlayTimeouts.forEach(id => clearTimeout(id));
-    overlayTimeouts.clear();
 
     // Clear pending state
-    pendingFullUpdate = null;
+    nextFullUpdateSecond = null;
+    overlayStates.clear();
 
     // Cleanup provider
     if (screenshotProvider) {
@@ -107,6 +125,100 @@ async function restartProvider(reason) {
 }
 
 /**
+ * Extract base regions for overlays from base image
+ */
+async function extractBaseRegions(baseImage, overlays) {
+  overlayStates.clear();
+
+  for (const overlay of overlays) {
+    if (!overlay.region) continue;
+
+    const extractOpId = perfMonitor.start('baseImage:extractRegion', { name: overlay.name });
+
+    try {
+      // Extract as raw pixels - faster, no compression overhead
+      const baseRegionBuffer = await sharp(baseImage)
+        .extract({
+          left: overlay.region.x,
+          top: overlay.region.y,
+          width: overlay.region.width,
+          height: overlay.region.height
+        })
+        .ensureAlpha() // Ensure consistent 4-channel RGBA format
+        .raw()
+        .toBuffer();
+
+      overlayStates.set(overlay.name, {
+        overlay,
+        region: overlay.region,
+        style: overlay.style,
+        baseRegionBuffer,
+        rawMetadata: {
+          width: overlay.region.width,
+          height: overlay.region.height,
+          channels: 4 // Always RGBA after ensureAlpha()
+        }
+      });
+
+      perfMonitor.end(extractOpId);
+    } catch (err) {
+      perfMonitor.end(extractOpId, { success: false });
+      throw new Error(
+        `Failed to extract region for overlay '${overlay.name}': ${err.message}\n` +
+        `Region: x=${overlay.region.x}, y=${overlay.region.y}, ` +
+        `w=${overlay.region.width}, h=${overlay.region.height}`
+      );
+    }
+  }
+}
+
+/**
+ * Re-capture base image and schedule full update
+ */
+async function recaptureBaseImage(reason, enabledOverlays) {
+  const perfOpId = perfMonitor.start('baseImage:recapture', { reason });
+  const startTime = Date.now();
+
+  try {
+    console.log(`\nRe-capturing base image (${reason})...`);
+
+    // Screenshot new page
+    const hideSelectors = enabledOverlays.map(o => o.selector);
+    const screenshotOpId = perfMonitor.start('baseImage:screenshot');
+    const newBaseImageBuffer = await screenshotProvider.captureScreenshot(hideSelectors);
+    perfMonitor.end(screenshotOpId, { bufferSize: newBaseImageBuffer.length });
+
+    // Validate sharp can process it
+    const metadata = await sharp(newBaseImageBuffer).metadata();
+    console.log(`Screenshot: ${metadata.format} ${metadata.width}x${metadata.height}`);
+
+    // Update base image
+    baseImageBuffer = newBaseImageBuffer;
+
+    // Extract new base regions for overlays
+    if (enabledOverlays.length > 0) {
+      await extractBaseRegions(baseImageBuffer, enabledOverlays);
+    }
+
+    const duration = Date.now() - startTime;
+    console.log(`✓ Base image recaptured in ${duration}ms`);
+
+    // Schedule full update at the next unqueued second
+    const currentSecond = Math.floor(Date.now() / 1000);
+    const lastQueued = queue.getLastQueuedSecond();
+    nextFullUpdateSecond = lastQueued ? lastQueued + 1 : currentSecond + 1;
+
+    console.log(`Full update scheduled for second ${nextFullUpdateSecond} (${new Date(nextFullUpdateSecond * 1000).toISOString()})`);
+    perfMonitor.end(perfOpId, { success: true, duration });
+
+  } catch (err) {
+    const duration = Date.now() - startTime;
+    perfMonitor.end(perfOpId, { success: false, error: err.message, duration });
+    console.error(`Base image recapture failed after ${duration}ms:`, err.message);
+  }
+}
+
+/**
  * Main initialization and run loop
  */
 async function initializeAndRun() {
@@ -116,13 +228,7 @@ async function initializeAndRun() {
   screenshotProvider = createScreenshotProvider(config);
   await screenshotProvider.initialize();
 
-  // Create overlay manager
-  overlayManager = new OverlayManager(config, perfMonitor);
-
-  // Configure overlays from mandatory config metadata
-  overlayManager.configure();
-
-  // Collect selectors to hide from screenshots
+  // Get enabled overlays
   const enabledOverlays = getEnabledOverlays(config);
   const hideSelectors = enabledOverlays.map(o => o.selector);
 
@@ -134,242 +240,121 @@ async function initializeAndRun() {
   perfMonitor.sampleMemory('after-base-screenshot');
   console.log('Base image captured');
 
-  // Cache base regions for overlays
-  if (overlayManager.states.size > 0) {
-    console.log('Caching base regions for overlays...');
-    await overlayManager.cacheBaseRegions(baseImageBuffer);
+  // Extract base regions for overlays
+  if (enabledOverlays.length > 0) {
+    console.log('Extracting base regions for overlays...');
+    await extractBaseRegions(baseImageBuffer, enabledOverlays);
   }
 
   // Startup transition from splash screen to calendar
   console.log('\n' + '='.repeat(60));
-  console.log('🎨 Preparing calendar display (splash screen visible)...');
+  console.log('🎨 Pre-rendering framebuffer operations (splash screen visible)...');
   console.log('='.repeat(60));
 
-  // Pre-render clock frames
-  console.log('Pre-rendering clock frames...');
-  await overlayManager.preRenderClockFrames();
-  perfMonitor.sampleMemory('after-clock-prerender');
-  console.log('✓ Cache populated, ready to display');
+  // Create queue-based rendering system
+  queue = new FramebufferQueue(10); // 10-second window
+  renderer = new FramebufferRenderer(config, perfMonitor);
+  scheduler = new DisplayScheduler(queue, framebuffer, perfMonitor);
 
-  // Composite initial overlays onto base image
-  console.log('Compositing overlays onto base image...');
-  const compositedImage = await overlayManager.compositeOntoBase(baseImageBuffer);
+  // Pre-render initial window of operations (10 seconds ahead)
+  const currentSecond = Math.floor(Date.now() / 1000);
+  console.log(`Pre-rendering operations for seconds ${currentSecond} to ${currentSecond + queue.windowSize - 1}...`);
 
-  // Smooth transition: write composited image to framebuffer
+  for (let i = 0; i < queue.windowSize; i++) {
+    const displaySecond = currentSecond + i;
+    const displayTime = displaySecond * 1000;
+
+    let operation;
+    if (i === 0 || enabledOverlays.length === 0) {
+      // First frame or no overlays: full update
+      operation = await renderer.renderFullUpdate(baseImageBuffer, enabledOverlays, overlayStates, displayTime);
+    } else {
+      // Subsequent frames with overlays: partial update (first overlay only for now)
+      const overlay = enabledOverlays[0];
+      const state = overlayStates.get(overlay.name);
+      operation = await renderer.renderPartialUpdate(overlay, state, displayTime);
+    }
+
+    queue.enqueue(displaySecond, operation);
+  }
+
+  perfMonitor.sampleMemory('after-prerender');
+  console.log(`✓ ${queue.windowSize} operations pre-rendered and queued`);
+
+  // Display first operation immediately (splash transition)
   console.log('\n' + '='.repeat(60));
   console.log('🔄 TRANSITIONING FROM SPLASH TO CALENDAR');
   console.log('='.repeat(60));
-  await framebuffer.writeFull(compositedImage);
-  perfMonitor.sampleMemory('after-initial-overlays');
-  console.log('✓ Calendar displayed with pre-populated cache');
+  await scheduler.displayFrame(currentSecond);
+  perfMonitor.sampleMemory('after-initial-display');
+  console.log('✓ Calendar displayed');
   console.log('='.repeat(60) + '\n');
 
-  /**
-   * Re-capture base image when page changes (smooth transition)
-   */
-  const recaptureBaseImage = async (reason) => {
-    const perfOpId = perfMonitor.start('baseImage:recapture', { reason });
-    const startTime = Date.now();
+  // Start display scheduler (writes queued operations at second boundaries)
+  scheduler.start();
 
-    try {
-      console.log(`Re-capturing base image (${reason})...`);
-      console.log('Old cache continues serving frames during preparation...');
-
-      // Screenshot new page
-      const screenshotOpId = perfMonitor.start('baseImage:screenshot');
-      const newBaseImageBuffer = await screenshotProvider.captureScreenshot(hideSelectors);
-      perfMonitor.end(screenshotOpId, { bufferSize: newBaseImageBuffer.length });
-
-      // Validate that sharp can process the buffer
-      let metadata;
+  // Start queue maintainer loop (keeps queue filled)
+  queueMaintainerRunning = true;
+  const maintainQueue = async () => {
+    while (queueMaintainerRunning) {
       try {
-        metadata = await sharp(newBaseImageBuffer).metadata();
-        console.log(`Screenshot metadata: ${metadata.format} ${metadata.width}x${metadata.height}, ` +
-                    `channels: ${metadata.channels}, space: ${metadata.space}`);
-      } catch (err) {
-        throw new Error(`Sharp cannot process screenshot buffer: ${err.message}`);
-      }
-
-      // Extract new base regions as raw pixels (faster than PNG encoding)
-      const newOverlayStates = new Map();
-
-      for (const overlay of enabledOverlays) {
-        if (!overlay.region) continue;
-
-        const extractOpId = perfMonitor.start('baseImage:extractRegion', { name: overlay.name });
-
-        try {
-          // Extract as raw pixels - faster, no compression overhead
-          const baseRegionBuffer = await sharp(newBaseImageBuffer)
-            .extract({
-              left: overlay.region.x,
-              top: overlay.region.y,
-              width: overlay.region.width,
-              height: overlay.region.height
-            })
-            .ensureAlpha() // Ensure consistent 4-channel RGBA format
-            .raw()
-            .toBuffer();
-
-          newOverlayStates.set(overlay.name, {
-            overlay,
-            region: overlay.region,
-            style: overlay.style,
-            baseRegionBuffer,
-            rawMetadata: {
-              width: overlay.region.width,
-              height: overlay.region.height,
-              channels: 4 // Always RGBA after ensureAlpha()
-            }
-          });
-
-          perfMonitor.end(extractOpId);
-        } catch (err) {
-          perfMonitor.end(extractOpId, { success: false });
-          throw new Error(
-            `Failed to extract region for overlay '${overlay.name}': ${err.message}\n` +
-            `Region: x=${overlay.region.x}, y=${overlay.region.y}, ` +
-            `w=${overlay.region.width}, h=${overlay.region.height}\n` +
-            `Image: ${metadata.width}x${metadata.height}`
-          );
-        }
-      }
-
-      // Pipeline approach: buffer or write immediately depending on overlays
-      const duration = Date.now() - startTime;
-      console.log(`✓ Base image recaptured in ${duration}ms, applying transition...`);
-
-      baseImageBuffer = newBaseImageBuffer;
-
-      if (enabledOverlays.length === 0) {
-        // No overlays: immediate pipeline - write new base directly to framebuffer
-        console.log('No overlays - writing new base image directly to framebuffer');
-        await framebuffer.writeFull(baseImageBuffer);
-        console.log('✓ New base image displayed');
-      } else {
-        // With overlays: buffered pipeline - delay full update until first unrendered frame
-        // This prevents visual mismatch between new background and old cached overlay
-        overlayManager.swapBaseRegions(newOverlayStates);
-
-        // Mark pending full update (will execute when cache extends to render next frame)
-        pendingFullUpdate = { baseImageBuffer };
-
-        const cache = overlayManager.clockCaches.values().next().value;
         const currentSecond = Math.floor(Date.now() / 1000);
-        console.log(`✓ Transition prepared - NO framebuffer write yet`);
-        console.log(`  Current time: ${new Date().toISOString()}`);
-        console.log(`  Current second: ${currentSecond}`);
-        console.log(`  Cache window: ${cache?.windowStart} to ${cache?.windowEnd}`);
-        console.log(`  Frames ahead: ${cache ? cache.windowEnd - currentSecond + 1 : 'N/A'}`);
-        console.log(`  Full update will occur when cache extends to next frame`);
+
+        // Check if queue needs more operations
+        if (queue.needsMore(currentSecond)) {
+          const displaySecond = queue.getNextUnqueuedSecond(currentSecond);
+          const displayTime = displaySecond * 1000;
+
+          // Check if this should be a full update (base image changed)
+          const isFullUpdate = nextFullUpdateSecond !== null && displaySecond === nextFullUpdateSecond;
+
+          let operation;
+          if (isFullUpdate) {
+            console.log(`\nRendering FULL update for second ${displaySecond} (new base image)`);
+            operation = await renderer.renderFullUpdate(baseImageBuffer, enabledOverlays, overlayStates, displayTime);
+            nextFullUpdateSecond = null; // Clear flag
+            console.log(`✓ Full update rendered and queued for ${new Date(displayTime).toISOString()}`);
+          } else if (enabledOverlays.length === 0) {
+            // No overlays: full updates only (but reuse same base)
+            operation = await renderer.renderFullUpdate(baseImageBuffer, enabledOverlays, overlayStates, displayTime);
+          } else {
+            // Normal partial update (first overlay)
+            const overlay = enabledOverlays[0];
+            const state = overlayStates.get(overlay.name);
+            operation = await renderer.renderPartialUpdate(overlay, state, displayTime);
+          }
+
+          queue.enqueue(displaySecond, operation);
+
+          if (perfMonitor.config.enabled && displaySecond % 10 === 0) {
+            const status = queue.getStatus(currentSecond);
+            console.log(`Queue: ${status.size} operations, ${status.secondsAhead}s ahead (${status.range})`);
+          }
+        }
+
+        // Sleep briefly before next check
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+      } catch (err) {
+        console.error('Error in queue maintainer:', err.message);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Longer sleep on error
       }
-
-      perfMonitor.end(perfOpId, { success: true, duration });
-
-    } catch (err) {
-      const duration = Date.now() - startTime;
-      perfMonitor.end(perfOpId, { success: false, error: err.message, duration });
-      console.error(`Base image recapture failed after ${duration}ms:`, err.message);
     }
   };
 
-  // Set up periodic refresh (mandatory)
-  // Browser starts fresh for each screenshot, preventing memory leaks and cache growth
+  // Start queue maintainer in background
+  maintainQueue().catch(err => {
+    console.error('Queue maintainer fatal error:', err);
+  });
+
+  // Set up periodic refresh
   const refreshInterval = config.refreshInterval || 300000; // Default 5 minutes
   console.log(`Setting up periodic refresh every ${refreshInterval}ms`);
-  console.log('Browser will start fresh for each screenshot (no long-running processes)');
 
   const refreshIntervalId = setInterval(async () => {
-    await recaptureBaseImage('periodic refresh');
+    await recaptureBaseImage('periodic refresh', enabledOverlays);
   }, refreshInterval);
   intervals.push(refreshIntervalId);
-
-  // Track in-progress updates per overlay (drop-frame behavior)
-  const overlayUpdateInProgress = new Map();
-
-  // Start overlay update loops
-  if (overlayManager.states.size > 0) {
-    for (const overlay of enabledOverlays) {
-      if (!overlayManager.states.has(overlay.name)) {
-        continue;
-      }
-
-      overlayUpdateInProgress.set(overlay.name, false);
-      const updateInterval = overlay.updateInterval || 1000;
-
-      console.log(`Starting overlay '${overlay.name}' update loop (${updateInterval}ms, synchronized to second boundaries)`);
-
-      // Create update function for this overlay
-      const updateOverlay = async (overlay) => {
-        // Drop-frame: skip if update already in progress
-        if (overlayUpdateInProgress.get(overlay.name)) {
-          return;
-        }
-
-        overlayUpdateInProgress.set(overlay.name, true);
-
-        try {
-          // Check if this is the transition point: pending full update + we're at the first unrendered second
-          const cache = overlayManager.clockCaches.get(overlay.name);
-          const currentSecond = Math.floor(Date.now() / 1000);
-          const nextUnrenderedSecond = cache ? cache.windowEnd + 1 : null;
-          const isTransitionPoint = pendingFullUpdate && cache && currentSecond === nextUnrenderedSecond;
-
-          if (isTransitionPoint) {
-            // This is the first unrendered frame - perfect timing for full update!
-            const now = new Date();
-            console.log(`\n🔄 TRANSITION POINT REACHED - current second matches first unrendered frame`);
-            console.log(`  Overlay: '${overlay.name}'`);
-            console.log(`  Time: ${now.toISOString()}`);
-            console.log(`  Current second: ${currentSecond} = windowEnd + 1 (${cache.windowEnd} + 1)`);
-            console.log(`  Cache window before extend: ${cache.windowStart} to ${cache.windowEnd}`);
-
-            // First, let the cache extend to render the new frame with new base
-            await cache.extendWindow(1, now);
-            console.log(`✓ New frame rendered with new base`);
-            console.log(`  Cache window after extend: ${cache.windowStart} to ${cache.windowEnd}`);
-
-            // Now do FULL update with the newly-rendered frame
-            console.log(`  Compositing all overlays onto new base...`);
-            const compositedImage = await overlayManager.compositeOntoBase(baseImageBuffer);
-            console.log(`  Writing FULL framebuffer update...`);
-            await framebuffer.writeFull(compositedImage);
-
-            console.log('✓ Full update complete - new base displayed with newly-rendered overlay');
-            pendingFullUpdate = null; // Clear pending flag
-          } else {
-            // Normal partial update - but don't extend cache if we're waiting for transition
-            const allowCacheExtension = !pendingFullUpdate;
-            const updateFn = overlayManager.createUpdateFunction(overlay, framebuffer, null, allowCacheExtension);
-            await updateFn();
-          }
-        } catch (err) {
-          console.error(`Error updating overlay '${overlay.name}':`, err.message);
-        } finally {
-          overlayUpdateInProgress.set(overlay.name, false);
-        }
-      };
-
-      // Self-scheduling function that synchronizes to second boundaries
-      const scheduleNextUpdate = (overlay) => {
-        const now = Date.now();
-        const msUntilNextSecond = 1000 - (now % 1000);
-
-        const timeoutId = setTimeout(async () => {
-          // Update overlay (with drop-frame protection)
-          await updateOverlay(overlay);
-
-          // Reschedule for next second boundary (self-correcting, no drift)
-          scheduleNextUpdate(overlay);
-        }, msUntilNextSecond);
-
-        overlayTimeouts.set(overlay.name, timeoutId);
-      };
-
-      // Start the self-scheduling loop
-      scheduleNextUpdate(overlay);
-    }
-  }
 
   // Log running status
   console.log('='.repeat(60));
@@ -409,10 +394,17 @@ async function initializeAndRun() {
   const shutdown = async () => {
     console.log('\nShutting down...');
 
-    // Clear all intervals and timeouts
-    console.log(`Clearing ${intervals.length} interval(s) and ${overlayTimeouts.size} timeout(s)...`);
+    // Stop scheduler
+    if (scheduler) {
+      scheduler.stop();
+    }
+
+    // Stop queue maintainer
+    queueMaintainerRunning = false;
+
+    // Clear all intervals
+    console.log(`Clearing ${intervals.length} interval(s)...`);
     intervals.forEach(id => clearInterval(id));
-    overlayTimeouts.forEach(id => clearTimeout(id));
 
     // Print final performance report if enabled
     if (perfMonitor.config.enabled) {
