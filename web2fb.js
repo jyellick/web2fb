@@ -60,7 +60,6 @@ let screenshotProvider = null;
 let framebuffer = null;
 let overlayManager = null;
 let baseImageBuffer = null;
-let pendingBaseTransition = null;
 let intervals = [];
 
 /**
@@ -229,64 +228,36 @@ async function initializeAndRun() {
         }
       }
 
-      // Schedule transition at next second boundary for smooth clock update
-      const now = Date.now();
-      const msUntilNextSecond = 1000 - (now % 1000);
-      const switchTime = now + msUntilNextSecond;
-
-      console.log(`Scheduling transition in ${msUntilNextSecond}ms (at second boundary)...`);
-
-      // Store pending transition
-      pendingBaseTransition = {
-        switchTime,
-        newBaseImageBuffer,
-        newOverlayStates,
-        newCaches: null
-      };
-
-      // Pre-render clock caches for new base (in background)
-      const clockOverlays = enabledOverlays.filter(o => o.type === 'clock');
-      if (clockOverlays.length > 0) {
-        const cacheOpId = perfMonitor.start('baseImage:prerenderClocks', { count: clockOverlays.length });
-
-        pendingBaseTransition.newCaches = new Map();
-
-        for (const overlay of clockOverlays) {
-          const state = newOverlayStates.get(overlay.name);
-          if (!state) continue;
-
-          const newCache = new ClockCache(overlay, state.baseRegionBuffer, state.region, state.style, state.rawMetadata);
-          await newCache.preRender(new Date(switchTime), newCache.windowSize);
-
-          pendingBaseTransition.newCaches.set(overlay.name, newCache);
-        }
-
-        perfMonitor.end(cacheOpId);
-      }
-
+      // Execute transition immediately - no need to schedule
+      // With overlays: cache naturally buffers the transition (~10 seconds ahead)
+      // Without overlays: writes immediately to framebuffer
       const duration = Date.now() - startTime;
-      perfMonitor.end(perfOpId, { success: true, duration });
+      console.log(`✓ Base image recaptured in ${duration}ms, applying transition...`);
 
-      // If there are no overlays, immediately apply the transition (no need to wait for overlay update loop)
+      baseImageBuffer = newBaseImageBuffer;
+
       if (enabledOverlays.length === 0) {
-        console.log(`✓ Base image recaptured in ${duration}ms, applying immediately (no overlays)`);
-        console.log('\n🔄 Writing updated base image to framebuffer...');
-
-        baseImageBuffer = pendingBaseTransition.newBaseImageBuffer;
+        // No overlays: write new base immediately to framebuffer
+        console.log('No overlays - writing new base image directly to framebuffer');
         await framebuffer.writeFull(baseImageBuffer);
-
-        console.log('✓ Base image written to framebuffer');
-        pendingBaseTransition = null;
+        console.log('✓ New base image displayed');
       } else {
-        console.log(`✓ Base image recaptured in ${duration}ms, transition scheduled`);
+        // With overlays: swap base regions in caches (keeps existing frames, future frames use new base)
+        overlayManager.swapBaseRegions(newOverlayStates);
+
+        // Write full composited image to framebuffer (updates background immediately)
+        const compositedImage = await overlayManager.compositeOntoBase(baseImageBuffer);
+        await framebuffer.writeFull(compositedImage);
+
+        console.log(`✓ Transition complete - background updated, cached overlay frames continue (~${overlayManager.clockCaches.values().next().value?.windowSize || 10}s ahead)`);
       }
+
+      perfMonitor.end(perfOpId, { success: true, duration });
 
     } catch (err) {
       const duration = Date.now() - startTime;
       perfMonitor.end(perfOpId, { success: false, error: err.message, duration });
       console.error(`Base image recapture failed after ${duration}ms:`, err.message);
-
-      pendingBaseTransition = null;
     }
   };
 
@@ -316,7 +287,7 @@ async function initializeAndRun() {
 
       console.log(`Starting overlay '${overlay.name}' update loop (${updateInterval}ms)`);
 
-      // Create update function with base transition handler
+      // Create update function for this overlay
       const updateOverlay = async (overlay) => {
         // Drop-frame: skip if update already in progress
         if (overlayUpdateInProgress.get(overlay.name)) {
@@ -326,25 +297,9 @@ async function initializeAndRun() {
         overlayUpdateInProgress.set(overlay.name, true);
 
         try {
-          // Perform base transition if pending and time has arrived
-          if (pendingBaseTransition && Date.now() >= pendingBaseTransition.switchTime) {
-            console.log('\n🔄 Executing base image transition...');
-
-            baseImageBuffer = pendingBaseTransition.newBaseImageBuffer;
-            overlayManager.replaceStates(pendingBaseTransition.newOverlayStates, pendingBaseTransition.newCaches);
-
-            // Write the new full base image to framebuffer (with current overlays composited)
-            const compositedImage = await overlayManager.compositeOntoBase(baseImageBuffer);
-            await framebuffer.writeFull(compositedImage);
-
-            console.log('✓ Base image transition complete - full image written to framebuffer');
-            pendingBaseTransition = null;
-          }
-
           // Update overlay on framebuffer
           const updateFn = overlayManager.createUpdateFunction(overlay, framebuffer);
           await updateFn();
-
         } catch (err) {
           console.error(`Error updating overlay '${overlay.name}':`, err.message);
         } finally {
@@ -353,14 +308,7 @@ async function initializeAndRun() {
       };
 
       // Set up interval for this overlay
-      const intervalId = setInterval(async () => {
-        try {
-          await updateOverlay(overlay);
-        } finally {
-          overlayUpdateInProgress.set(overlay.name, false);
-        }
-      }, updateInterval);
-
+      const intervalId = setInterval(() => updateOverlay(overlay), updateInterval);
       intervals.push(intervalId);
     }
   }

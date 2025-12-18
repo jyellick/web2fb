@@ -16,7 +16,6 @@ web2fb.config.json
 
 # Output/Temp
 *.png
-!splash.png
 screenshot_*
 framebuffer-preview.png
 test-fb/

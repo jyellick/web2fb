@@ -1,6 +1,6 @@
 {
   "name": "web2fb",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Optimized web-to-framebuffer renderer for displaying web dashboards on resource-constrained devices like Raspberry Pi Zero 2 W",
   "main": "web2fb.js",
   "bin": {
