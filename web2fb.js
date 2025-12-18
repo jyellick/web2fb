@@ -309,17 +309,19 @@ async function initializeAndRun() {
         overlayUpdateInProgress.set(overlay.name, true);
 
         try {
-          // Check if this is the transition point: pending full update + cache needs extending
+          // Check if this is the transition point: pending full update + we're at the first unrendered second
           const cache = overlayManager.clockCaches.get(overlay.name);
-          const isTransitionPoint = pendingFullUpdate && cache && cache.needsMoreFrames();
+          const currentSecond = Math.floor(Date.now() / 1000);
+          const nextUnrenderedSecond = cache ? cache.windowEnd + 1 : null;
+          const isTransitionPoint = pendingFullUpdate && cache && currentSecond === nextUnrenderedSecond;
 
           if (isTransitionPoint) {
-            // This is the first unrendered frame
+            // This is the first unrendered frame - perfect timing for full update!
             const now = new Date();
-            const currentSecond = Math.floor(now.getTime() / 1000);
-            console.log(`\n🔄 Cache extension triggered - overlay '${overlay.name}' needs next frame with new base`);
+            console.log(`\n🔄 TRANSITION POINT REACHED - current second matches first unrendered frame`);
+            console.log(`  Overlay: '${overlay.name}'`);
             console.log(`  Time: ${now.toISOString()}`);
-            console.log(`  Current second: ${currentSecond}`);
+            console.log(`  Current second: ${currentSecond} = windowEnd + 1 (${cache.windowEnd} + 1)`);
             console.log(`  Cache window before extend: ${cache.windowStart} to ${cache.windowEnd}`);
 
             // First, let the cache extend to render the new frame with new base
