@@ -62,6 +62,7 @@ let overlayManager = null;
 let baseImageBuffer = null;
 let intervals = [];
 let overlayTimeouts = new Map();
+let pendingFullUpdate = null; // { baseImageBuffer } - set when new base ready, cleared after full update
 
 /**
  * Restart screenshot provider (browser crashed or profile too large)
@@ -78,6 +79,9 @@ async function restartProvider(reason) {
     intervals = [];
     overlayTimeouts.forEach(id => clearTimeout(id));
     overlayTimeouts.clear();
+
+    // Clear pending state
+    pendingFullUpdate = null;
 
     // Cleanup provider
     if (screenshotProvider) {
@@ -231,28 +235,26 @@ async function initializeAndRun() {
         }
       }
 
-      // Execute transition immediately - no need to schedule
-      // With overlays: cache naturally buffers the transition (~10 seconds ahead)
-      // Without overlays: writes immediately to framebuffer
+      // Pipeline approach: buffer or write immediately depending on overlays
       const duration = Date.now() - startTime;
       console.log(`✓ Base image recaptured in ${duration}ms, applying transition...`);
 
       baseImageBuffer = newBaseImageBuffer;
 
       if (enabledOverlays.length === 0) {
-        // No overlays: write new base immediately to framebuffer
+        // No overlays: immediate pipeline - write new base directly to framebuffer
         console.log('No overlays - writing new base image directly to framebuffer');
         await framebuffer.writeFull(baseImageBuffer);
         console.log('✓ New base image displayed');
       } else {
-        // With overlays: swap base regions in caches (keeps existing frames, future frames use new base)
+        // With overlays: buffered pipeline - delay full update until first unrendered frame
+        // This prevents visual mismatch between new background and old cached overlay
         overlayManager.swapBaseRegions(newOverlayStates);
 
-        // Write full composited image to framebuffer (updates background immediately)
-        const compositedImage = await overlayManager.compositeOntoBase(baseImageBuffer);
-        await framebuffer.writeFull(compositedImage);
+        // Mark pending full update (will execute when cache extends to render next frame)
+        pendingFullUpdate = { baseImageBuffer };
 
-        console.log(`✓ Transition complete - background updated, cached overlay frames continue (~${overlayManager.clockCaches.values().next().value?.windowSize || 10}s ahead)`);
+        console.log(`✓ Transition prepared - full update will occur at next cache extension (~${overlayManager.clockCaches.values().next().value?.windowSize || 10}s ahead)`);
       }
 
       perfMonitor.end(perfOpId, { success: true, duration });
@@ -300,9 +302,25 @@ async function initializeAndRun() {
         overlayUpdateInProgress.set(overlay.name, true);
 
         try {
-          // Update overlay on framebuffer
-          const updateFn = overlayManager.createUpdateFunction(overlay, framebuffer);
-          await updateFn();
+          // Check if this is the transition point: pending full update + cache needs extending
+          const cache = overlayManager.clockCaches.get(overlay.name);
+          const isTransitionPoint = pendingFullUpdate && cache && cache.needsMoreFrames();
+
+          if (isTransitionPoint) {
+            // This is the first unrendered frame - do FULL update with new base
+            console.log(`\n🔄 Cache extension triggered - executing full update with new base for overlay '${overlay.name}'`);
+
+            // Composite current overlays onto new base and write full image
+            const compositedImage = await overlayManager.compositeOntoBase(baseImageBuffer);
+            await framebuffer.writeFull(compositedImage);
+
+            console.log('✓ Full update complete - new base with first newly-rendered overlay frame');
+            pendingFullUpdate = null; // Clear pending flag
+          } else {
+            // Normal partial update
+            const updateFn = overlayManager.createUpdateFunction(overlay, framebuffer);
+            await updateFn();
+          }
         } catch (err) {
           console.error(`Error updating overlay '${overlay.name}':`, err.message);
         } finally {
