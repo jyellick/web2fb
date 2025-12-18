@@ -61,6 +61,7 @@ let framebuffer = null;
 let overlayManager = null;
 let baseImageBuffer = null;
 let intervals = [];
+let overlayTimeouts = new Map();
 
 /**
  * Restart screenshot provider (browser crashed or profile too large)
@@ -71,10 +72,12 @@ async function restartProvider(reason) {
   console.log('='.repeat(60));
 
   try {
-    // Clear all intervals
-    console.log(`Clearing ${intervals.length} interval(s)...`);
+    // Clear all intervals and timeouts
+    console.log(`Clearing ${intervals.length} interval(s) and ${overlayTimeouts.size} timeout(s)...`);
     intervals.forEach(id => clearInterval(id));
     intervals = [];
+    overlayTimeouts.forEach(id => clearTimeout(id));
+    overlayTimeouts.clear();
 
     // Cleanup provider
     if (screenshotProvider) {
@@ -285,7 +288,7 @@ async function initializeAndRun() {
       overlayUpdateInProgress.set(overlay.name, false);
       const updateInterval = overlay.updateInterval || 1000;
 
-      console.log(`Starting overlay '${overlay.name}' update loop (${updateInterval}ms)`);
+      console.log(`Starting overlay '${overlay.name}' update loop (${updateInterval}ms, synchronized to second boundaries)`);
 
       // Create update function for this overlay
       const updateOverlay = async (overlay) => {
@@ -307,9 +310,24 @@ async function initializeAndRun() {
         }
       };
 
-      // Set up interval for this overlay
-      const intervalId = setInterval(() => updateOverlay(overlay), updateInterval);
-      intervals.push(intervalId);
+      // Self-scheduling function that synchronizes to second boundaries
+      const scheduleNextUpdate = (overlay) => {
+        const now = Date.now();
+        const msUntilNextSecond = 1000 - (now % 1000);
+
+        const timeoutId = setTimeout(async () => {
+          // Update overlay (with drop-frame protection)
+          await updateOverlay(overlay);
+
+          // Reschedule for next second boundary (self-correcting, no drift)
+          scheduleNextUpdate(overlay);
+        }, msUntilNextSecond);
+
+        overlayTimeouts.set(overlay.name, timeoutId);
+      };
+
+      // Start the self-scheduling loop
+      scheduleNextUpdate(overlay);
     }
   }
 
@@ -351,9 +369,10 @@ async function initializeAndRun() {
   const shutdown = async () => {
     console.log('\nShutting down...');
 
-    // Clear all intervals
-    console.log(`Clearing ${intervals.length} interval(s)...`);
+    // Clear all intervals and timeouts
+    console.log(`Clearing ${intervals.length} interval(s) and ${overlayTimeouts.size} timeout(s)...`);
     intervals.forEach(id => clearInterval(id));
+    overlayTimeouts.forEach(id => clearTimeout(id));
 
     // Print final performance report if enabled
     if (perfMonitor.config.enabled) {
