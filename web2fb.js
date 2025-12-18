@@ -338,8 +338,9 @@ async function initializeAndRun() {
             console.log('✓ Full update complete - new base displayed with newly-rendered overlay');
             pendingFullUpdate = null; // Clear pending flag
           } else {
-            // Normal partial update
-            const updateFn = overlayManager.createUpdateFunction(overlay, framebuffer);
+            // Normal partial update - but don't extend cache if we're waiting for transition
+            const allowCacheExtension = !pendingFullUpdate;
+            const updateFn = overlayManager.createUpdateFunction(overlay, framebuffer, null, allowCacheExtension);
             await updateFn();
           }
         } catch (err) {
