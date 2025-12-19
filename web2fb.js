@@ -319,8 +319,8 @@ async function initializeAndRun() {
           console.warn(`⚠️  Queue maintainer delayed: ${timeSinceLastCheck}ms since last check (expect ~50ms)`);
         }
 
-        const currentSecond = Math.floor(now / 1000);
-        const status = queue.getStatus(currentSecond);
+        let currentSecond = Math.floor(now / 1000);
+        let status = queue.getStatus(currentSecond);
 
         // Warn if queue is running low
         if (status.secondsAhead < 5) {
@@ -385,6 +385,10 @@ async function initializeAndRun() {
             const status = queue.getStatus(currentSecond);
             console.log(`Queue: ${status.size} operations, ${status.secondsAhead}s ahead (${status.range})`);
           }
+
+          // CRITICAL: Recalculate currentSecond after rendering to avoid stale values
+          // Rendering takes 100-200ms, so time advances significantly between iterations
+          currentSecond = Math.floor(Date.now() / 1000);
         }
 
         // Log batch rendering performance
