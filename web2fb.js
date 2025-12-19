@@ -16,6 +16,7 @@ const sharp = require('sharp');
 const { execSync } = require('child_process');
 const { loadConfig, getEnabledOverlays } = require('./lib/config');
 const { createScreenshotProvider } = require('./lib/screenshot-providers');
+const { generateOverlay } = require('./lib/overlays');
 const PerfMonitor = require('./lib/perf-monitor');
 const Framebuffer = require('./lib/framebuffer');
 const FramebufferQueue = require('./lib/framebuffer-queue');
