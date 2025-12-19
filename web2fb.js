@@ -21,6 +21,7 @@ const Framebuffer = require('./lib/framebuffer');
 const FramebufferQueue = require('./lib/framebuffer-queue');
 const FramebufferRenderer = require('./lib/framebuffer-renderer');
 const DisplayScheduler = require('./lib/display-scheduler');
+const { detectChangedRegions } = require('./lib/image-diff');
 
 // Get current git commit hash
 function getGitCommit() {
@@ -212,36 +213,113 @@ async function recaptureBaseImage(reason, enabledOverlays) {
     const duration = Date.now() - startTime;
     console.log(`✓ Base image recaptured in ${duration}ms`);
 
-    // Schedule full update at the next unqueued second
+    // Diff-based update: Compare old and new base images
+    let useDiffUpdate = false;
+    let changedRegions = null;
+
+    if (baseImageBuffer) {
+      console.log(`Detecting changed regions (diff-based optimization)...`);
+      const diffStart = Date.now();
+
+      const diffResult = await detectChangedRegions(baseImageBuffer, newBaseImageBuffer, {
+        threshold: 10,        // Pixel difference threshold
+        minRegionSize: 1000,  // Minimum 1000 pixels (e.g., 32x32 region)
+        mergeDist: 50         // Merge regions within 50 pixels
+      });
+
+      const diffDuration = Date.now() - diffStart;
+      console.log(`✓ Diff detection completed in ${diffDuration}ms`);
+      console.log(`  Changed: ${diffResult.changePercent.toFixed(1)}% of screen (${diffResult.changedPixels} pixels)`);
+
+      if (!diffResult.fullUpdateRecommended && diffResult.regions && diffResult.regions.length > 0) {
+        useDiffUpdate = true;
+        changedRegions = diffResult.regions;
+        console.log(`  Strategy: Partial updates for ${changedRegions.length} region(s)`);
+        changedRegions.forEach((r, i) => {
+          console.log(`    Region ${i + 1}: ${r.width}x${r.height} at (${r.x},${r.y})`);
+        });
+      } else {
+        console.log(`  Strategy: Full update (changes >= 70% or no distinct regions)`);
+      }
+    } else {
+      console.log(`First run: Using full update (no previous base image to compare)`);
+    }
+
+    // Schedule update at the next unqueued second
     const currentSecond = Math.floor(Date.now() / 1000);
     const lastQueued = queue.getLastQueuedSecond();
-    nextFullUpdateSecond = lastQueued ? lastQueued + 1 : currentSecond + 1;
+    const updateSecond = lastQueued ? lastQueued + 1 : currentSecond + 1;
 
-    console.log(`Full update scheduled for second ${nextFullUpdateSecond} (${new Date(nextFullUpdateSecond * 1000).toISOString()})`);
+    if (useDiffUpdate) {
+      // Diff-based approach: Pre-render partial updates for changed regions
+      console.log(`Pre-rendering ${changedRegions.length} partial update(s) (raw format)...`);
+      const preRenderStart = Date.now();
 
-    // Pre-render the full update NOW (during idle time) in raw format
-    // This moves the expensive 631ms render time out of the critical path
-    console.log(`Pre-rendering full update (raw format)...`);
-    const preRenderStart = Date.now();
-    const displayTime = nextFullUpdateSecond * 1000;
+      const preRenderedPartials = [];
+      for (let i = 0; i < changedRegions.length; i++) {
+        const region = changedRegions[i];
+        const displayTime = (updateSecond + i) * 1000; // Stagger updates over multiple seconds
 
-    // Remove alpha channel if framebuffer is RGB or RGB565 (not RGBA)
-    const needsAlpha = framebuffer.info.bpp === 32;
+        // Extract the changed region from the new base image
+        const regionBuffer = await sharp(newBaseImageBuffer)
+          .extract({ left: region.x, top: region.y, width: region.width, height: region.height })
+          .toBuffer();
 
-    preRenderedFullUpdate = await renderer.renderFullUpdate(
-      newBaseImageBuffer,
-      enabledOverlays,
-      pendingOverlayStates || new Map(),
-      displayTime,
-      {
-        rawOutput: true,        // Use raw format for faster write
-        removeAlpha: !needsAlpha // Remove alpha if FB doesn't need it
+        // Create a partial update operation directly (no overlay compositing needed for base changes)
+        const operation = {
+          type: 'partial',
+          buffer: regionBuffer,
+          region,
+          displayTime
+        };
+
+        preRenderedPartials.push({
+          second: updateSecond + i,
+          operation
+        });
       }
-    );
 
-    const preRenderDuration = Date.now() - preRenderStart;
-    console.log(`✓ Full update pre-rendered in ${preRenderDuration}ms (raw: ${preRenderedFullUpdate.buffer.length} bytes)`);
-    console.log(`Old overlay states remain active until full update displays`);
+      const preRenderDuration = Date.now() - preRenderStart;
+      console.log(`✓ ${changedRegions.length} partial update(s) pre-rendered in ${preRenderDuration}ms`);
+
+      // Store for queue maintainer to enqueue
+      preRenderedFullUpdate = {
+        type: 'diff',
+        partials: preRenderedPartials,
+        firstSecond: updateSecond,
+        lastSecond: updateSecond + changedRegions.length - 1
+      };
+      nextFullUpdateSecond = updateSecond;
+
+      console.log(`Diff-based updates scheduled for seconds ${updateSecond} to ${updateSecond + changedRegions.length - 1}`);
+    } else {
+      // Full update approach (same as before)
+      nextFullUpdateSecond = updateSecond;
+      console.log(`Full update scheduled for second ${nextFullUpdateSecond} (${new Date(nextFullUpdateSecond * 1000).toISOString()})`);
+
+      console.log(`Pre-rendering full update (raw format)...`);
+      const preRenderStart = Date.now();
+      const displayTime = nextFullUpdateSecond * 1000;
+
+      // Remove alpha channel if framebuffer is RGB or RGB565 (not RGBA)
+      const needsAlpha = framebuffer.info.bpp === 32;
+
+      preRenderedFullUpdate = await renderer.renderFullUpdate(
+        newBaseImageBuffer,
+        enabledOverlays,
+        pendingOverlayStates || new Map(),
+        displayTime,
+        {
+          rawOutput: true,        // Use raw format for faster write
+          removeAlpha: !needsAlpha // Remove alpha if FB doesn't need it
+        }
+      );
+
+      const preRenderDuration = Date.now() - preRenderStart;
+      console.log(`✓ Full update pre-rendered in ${preRenderDuration}ms (raw: ${preRenderedFullUpdate.buffer.length} bytes)`);
+    }
+
+    console.log(`Old overlay states remain active until updates display`);
     perfMonitor.end(perfOpId, { success: true, duration });
 
   } catch (err) {
@@ -362,41 +440,76 @@ async function initializeAndRun() {
             batchStartTime = Date.now();
           }
 
-          // CRITICAL: If there's a pre-rendered full update, enqueue it (no rendering needed!)
-          // The full update was already rendered during idle time in recaptureBaseImage()
+          // CRITICAL: If there's a pre-rendered update, enqueue it (no rendering needed!)
+          // The update was already rendered during idle time in recaptureBaseImage()
           if (nextFullUpdateSecond !== null && nextFullUpdateSecond >= currentSecond && preRenderedFullUpdate) {
-            const displaySecond = nextFullUpdateSecond;
-            console.log(`\nEnqueuing pre-rendered FULL update for second ${displaySecond} (already rendered!)`);
             const startTime = Date.now();
 
-            // Swap pending states into active (this is the critical moment!)
-            if (pendingBaseImageBuffer) {
-              baseImageBuffer = pendingBaseImageBuffer;
-              pendingBaseImageBuffer = null;
-              console.log(`✓ Base image swapped: pending → active`);
+            if (preRenderedFullUpdate.type === 'diff') {
+              // Diff-based update: Enqueue all pre-rendered partial updates
+              console.log(`\nEnqueuing ${preRenderedFullUpdate.partials.length} pre-rendered partial update(s) (diff-based)`);
+
+              // Swap pending states into active BEFORE enqueueing any partials
+              if (pendingBaseImageBuffer) {
+                baseImageBuffer = pendingBaseImageBuffer;
+                pendingBaseImageBuffer = null;
+                console.log(`✓ Base image swapped: pending → active`);
+              }
+              if (pendingOverlayStates) {
+                overlayStates = pendingOverlayStates;
+                pendingOverlayStates = null;
+                console.log(`✓ Overlay states swapped: pending → active`);
+              }
+
+              // Enqueue all partial updates
+              for (const { second, operation } of preRenderedFullUpdate.partials) {
+                const existingOp = queue.operations.get(second);
+                if (existingOp && perfMonitor.config.enabled) {
+                  console.warn(`⚠️  Overwriting existing ${existingOp.type} operation for second ${second}`);
+                }
+                queue.enqueue(second, operation);
+                batchCount++;
+              }
+
+              console.log(`✓ ${preRenderedFullUpdate.partials.length} partial update(s) enqueued in ${Date.now() - startTime}ms`);
+
+              // Clear the pre-rendered operation
+              preRenderedFullUpdate = null;
+              nextFullUpdateSecond = null;
+
+            } else {
+              // Full update (traditional approach)
+              const displaySecond = nextFullUpdateSecond;
+              console.log(`\nEnqueuing pre-rendered FULL update for second ${displaySecond} (already rendered!)`);
+
+              // Swap pending states into active
+              if (pendingBaseImageBuffer) {
+                baseImageBuffer = pendingBaseImageBuffer;
+                pendingBaseImageBuffer = null;
+                console.log(`✓ Base image swapped: pending → active`);
+              }
+              if (pendingOverlayStates) {
+                overlayStates = pendingOverlayStates;
+                pendingOverlayStates = null;
+                console.log(`✓ Overlay states swapped: pending → active`);
+              }
+
+              // Check if overwriting
+              const existingOp = queue.operations.get(displaySecond);
+              if (existingOp && perfMonitor.config.enabled) {
+                console.warn(`⚠️  Overwriting existing ${existingOp.type} operation for second ${displaySecond} with full`);
+              }
+
+              // Enqueue the pre-rendered operation
+              queue.enqueue(displaySecond, preRenderedFullUpdate);
+              batchCount++;
+
+              console.log(`✓ Full update enqueued in ${Date.now() - startTime}ms (no rendering - already done!)`);
+
+              // Clear the pre-rendered operation
+              preRenderedFullUpdate = null;
+              nextFullUpdateSecond = null;
             }
-            if (pendingOverlayStates) {
-              overlayStates = pendingOverlayStates;
-              pendingOverlayStates = null;
-              console.log(`✓ Overlay states swapped: pending → active`);
-            }
-
-            // Check if overwriting
-            const existingOp = queue.operations.get(displaySecond);
-            if (existingOp && perfMonitor.config.enabled) {
-              console.warn(`⚠️  Overwriting existing ${existingOp.type} operation for second ${displaySecond} with full`);
-            }
-
-            // Enqueue the pre-rendered operation
-            queue.enqueue(displaySecond, preRenderedFullUpdate);
-            batchCount++;
-
-            // Clear the pre-rendered operation
-            preRenderedFullUpdate = null;
-            nextFullUpdateSecond = null;
-
-            const duration = Date.now() - startTime;
-            console.log(`✓ Full update enqueued in ${duration}ms (no rendering - already done!)`);
 
             // CRITICAL: Recalculate currentSecond
             currentSecond = Math.floor(Date.now() / 1000);
