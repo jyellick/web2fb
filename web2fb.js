@@ -61,6 +61,8 @@ let screenshotProvider = null;
 let framebuffer = null;
 let baseImageBuffer = null;
 let overlayStates = new Map(); // name -> { overlay, region, style, baseRegionBuffer, rawMetadata }
+let pendingOverlayStates = null; // New overlay states awaiting full update
+let pendingBaseImageBuffer = null; // New base image awaiting full update
 let queue = null;
 let renderer = null;
 let scheduler = null;
@@ -100,6 +102,8 @@ async function restartProvider(reason) {
     // Clear pending state
     nextFullUpdateSecond = null;
     overlayStates.clear();
+    pendingOverlayStates = null;
+    pendingBaseImageBuffer = null;
 
     // Cleanup provider
     if (screenshotProvider) {
@@ -126,9 +130,12 @@ async function restartProvider(reason) {
 
 /**
  * Extract base regions for overlays from base image
+ * @param {Buffer} baseImage - Base image buffer
+ * @param {Array} overlays - Enabled overlays
+ * @param {Map} targetStates - Map to store extracted states (defaults to overlayStates)
  */
-async function extractBaseRegions(baseImage, overlays) {
-  overlayStates.clear();
+async function extractBaseRegions(baseImage, overlays, targetStates = overlayStates) {
+  targetStates.clear();
 
   for (const overlay of overlays) {
     if (!overlay.region) continue;
@@ -148,7 +155,7 @@ async function extractBaseRegions(baseImage, overlays) {
         .raw()
         .toBuffer();
 
-      overlayStates.set(overlay.name, {
+      targetStates.set(overlay.name, {
         overlay,
         region: overlay.region,
         style: overlay.style,
@@ -192,12 +199,13 @@ async function recaptureBaseImage(reason, enabledOverlays) {
     const metadata = await sharp(newBaseImageBuffer).metadata();
     console.log(`Screenshot: ${metadata.format} ${metadata.width}x${metadata.height}`);
 
-    // Update base image
-    baseImageBuffer = newBaseImageBuffer;
+    // Store new base and regions as PENDING (don't update active state yet)
+    pendingBaseImageBuffer = newBaseImageBuffer;
 
-    // Extract new base regions for overlays
+    // Extract new base regions into PENDING state
     if (enabledOverlays.length > 0) {
-      await extractBaseRegions(baseImageBuffer, enabledOverlays);
+      pendingOverlayStates = new Map();
+      await extractBaseRegions(newBaseImageBuffer, enabledOverlays, pendingOverlayStates);
     }
 
     const duration = Date.now() - startTime;
@@ -209,6 +217,7 @@ async function recaptureBaseImage(reason, enabledOverlays) {
     nextFullUpdateSecond = lastQueued ? lastQueued + 1 : currentSecond + 1;
 
     console.log(`Full update scheduled for second ${nextFullUpdateSecond} (${new Date(nextFullUpdateSecond * 1000).toISOString()})`);
+    console.log(`Old overlay states remain active until full update renders`);
     perfMonitor.end(perfOpId, { success: true, duration });
 
   } catch (err) {
@@ -326,7 +335,25 @@ async function initializeAndRun() {
           if (isFullUpdate) {
             console.log(`\nRendering FULL update for second ${displaySecond} (new base image)`);
             const fullStartTime = Date.now();
-            operation = await renderer.renderFullUpdate(baseImageBuffer, enabledOverlays, overlayStates, displayTime);
+
+            // Use pending states for the full update
+            const baseForRender = pendingBaseImageBuffer || baseImageBuffer;
+            const statesForRender = pendingOverlayStates || overlayStates;
+
+            operation = await renderer.renderFullUpdate(baseForRender, enabledOverlays, statesForRender, displayTime);
+
+            // Now swap pending into active (this is the critical moment!)
+            if (pendingBaseImageBuffer) {
+              baseImageBuffer = pendingBaseImageBuffer;
+              pendingBaseImageBuffer = null;
+              console.log(`✓ Base image swapped: pending → active`);
+            }
+            if (pendingOverlayStates) {
+              overlayStates = pendingOverlayStates;
+              pendingOverlayStates = null;
+              console.log(`✓ Overlay states swapped: pending → active`);
+            }
+
             nextFullUpdateSecond = null; // Clear flag
             console.log(`✓ Full update rendered in ${Date.now() - fullStartTime}ms`);
           } else if (enabledOverlays.length === 0) {
