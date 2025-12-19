@@ -31,7 +31,7 @@ function getGitCommit() {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'ignore']
     }).trim();
-  } catch (err) {
+  } catch (_err) {
     return 'unknown';
   }
 }
@@ -76,7 +76,7 @@ let nextFullUpdateSecond = null; // Second when next full update should occur
 /**
  * Restart screenshot provider (browser crashed or profile too large)
  */
-async function restartProvider(reason) {
+async function _restartProvider(reason) {
   console.log('\n' + '='.repeat(60));
   console.log(`🔄 Restarting screenshot provider (${reason})`);
   console.log('='.repeat(60));

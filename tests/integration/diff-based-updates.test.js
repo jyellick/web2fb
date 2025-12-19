@@ -113,7 +113,7 @@ describe('Diff-Based Updates Integration', () => {
         .toBuffer();
 
       // Verify the result includes both the changed background AND the overlay
-      const resultPixels = await sharp(resultBuffer)
+      const _resultPixels = await sharp(resultBuffer)
         .raw()
         .toBuffer({ resolveWithObject: true });
 

@@ -5,7 +5,7 @@
 
 const sharp = require('sharp');
 const FramebufferRenderer = require('../../lib/framebuffer-renderer');
-const { generateOverlay } = require('../../lib/overlays');
+const { _generateOverlay } = require('../../lib/overlays');
 
 describe('Framebuffer Rendering Integration', () => {
   let renderer;

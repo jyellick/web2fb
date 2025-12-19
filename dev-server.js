@@ -110,7 +110,7 @@ async function framebufferToPNG() {
       .toBuffer();
 
     return pngBuffer;
-  } catch (_err) {
+  } catch (err) {
     console.error('Error converting framebuffer:', err.message);
     throw err;
   }
@@ -391,7 +391,7 @@ function startServer() {
 try {
   setupFramebuffer();
   startServer();
-} catch (_err) {
+} catch (err) {
   console.error('Failed to start development server:', err);
   process.exit(1);
 }
