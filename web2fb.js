@@ -299,9 +299,23 @@ async function initializeAndRun() {
     while (queueMaintainerRunning) {
       try {
         const currentSecond = Math.floor(Date.now() / 1000);
+        const status = queue.getStatus(currentSecond);
 
-        // Check if queue needs more operations
-        if (queue.needsMore(currentSecond)) {
+        // Warn if queue is running low
+        if (status.secondsAhead < 3) {
+          console.warn(`⚠️  Queue running low: only ${status.secondsAhead}s ahead (${status.range})`);
+        }
+
+        // Batch render multiple frames when queue needs filling
+        // This is much more efficient than one-at-a-time
+        let batchStartTime = null;
+        let batchCount = 0;
+
+        while (queue.needsMore(currentSecond)) {
+          if (batchStartTime === null) {
+            batchStartTime = Date.now();
+          }
+
           const displaySecond = queue.getNextUnqueuedSecond(currentSecond);
           const displayTime = displaySecond * 1000;
 
@@ -311,9 +325,10 @@ async function initializeAndRun() {
           let operation;
           if (isFullUpdate) {
             console.log(`\nRendering FULL update for second ${displaySecond} (new base image)`);
+            const fullStartTime = Date.now();
             operation = await renderer.renderFullUpdate(baseImageBuffer, enabledOverlays, overlayStates, displayTime);
             nextFullUpdateSecond = null; // Clear flag
-            console.log(`✓ Full update rendered and queued for ${new Date(displayTime).toISOString()}`);
+            console.log(`✓ Full update rendered in ${Date.now() - fullStartTime}ms`);
           } else if (enabledOverlays.length === 0) {
             // No overlays: full updates only (but reuse same base)
             operation = await renderer.renderFullUpdate(baseImageBuffer, enabledOverlays, overlayStates, displayTime);
@@ -325,6 +340,7 @@ async function initializeAndRun() {
           }
 
           queue.enqueue(displaySecond, operation);
+          batchCount++;
 
           if (perfMonitor.config.enabled && displaySecond % 10 === 0) {
             const status = queue.getStatus(currentSecond);
@@ -332,8 +348,15 @@ async function initializeAndRun() {
           }
         }
 
-        // Sleep briefly before next check
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Log batch rendering performance
+        if (batchCount > 0 && perfMonitor.config.enabled) {
+          const batchDuration = Date.now() - batchStartTime;
+          const avgPerFrame = batchDuration / batchCount;
+          console.log(`Batch rendered ${batchCount} frames in ${batchDuration}ms (${avgPerFrame.toFixed(1)}ms/frame)`);
+        }
+
+        // Sleep briefly before next check (reduced from 100ms to 50ms for faster response)
+        await new Promise(resolve => setTimeout(resolve, 50));
 
       } catch (err) {
         console.error('Error in queue maintainer:', err.message);
