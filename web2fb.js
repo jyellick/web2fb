@@ -261,7 +261,8 @@ async function initializeAndRun() {
   console.log('='.repeat(60));
 
   // Create queue-based rendering system
-  queue = new FramebufferQueue(10); // 10-second window
+  // Use 15-second window for more buffer against slow rendering
+  queue = new FramebufferQueue(15);
   renderer = new FramebufferRenderer(config, perfMonitor);
   scheduler = new DisplayScheduler(queue, framebuffer, perfMonitor);
 
@@ -304,14 +305,25 @@ async function initializeAndRun() {
 
   // Start queue maintainer loop (keeps queue filled)
   queueMaintainerRunning = true;
+  let lastCheckTime = Date.now();
+
   const maintainQueue = async () => {
     while (queueMaintainerRunning) {
       try {
-        const currentSecond = Math.floor(Date.now() / 1000);
+        const now = Date.now();
+        const timeSinceLastCheck = now - lastCheckTime;
+        lastCheckTime = now;
+
+        // Warn if check loop is delayed
+        if (perfMonitor.config.enabled && timeSinceLastCheck > 200) {
+          console.warn(`⚠️  Queue maintainer delayed: ${timeSinceLastCheck}ms since last check (expect ~50ms)`);
+        }
+
+        const currentSecond = Math.floor(now / 1000);
         const status = queue.getStatus(currentSecond);
 
         // Warn if queue is running low
-        if (status.secondsAhead < 3) {
+        if (status.secondsAhead < 5) {
           console.warn(`⚠️  Queue running low: only ${status.secondsAhead}s ahead (${status.range})`);
         }
 
