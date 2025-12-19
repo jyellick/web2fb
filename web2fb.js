@@ -261,11 +261,56 @@ async function recaptureBaseImage(reason, enabledOverlays) {
         const displayTime = (updateSecond + i) * 1000; // Stagger updates over multiple seconds
 
         // Extract the changed region from the new base image
-        const regionBuffer = await sharp(newBaseImageBuffer)
-          .extract({ left: region.x, top: region.y, width: region.width, height: region.height })
-          .toBuffer();
+        let regionImage = sharp(newBaseImageBuffer)
+          .extract({ left: region.x, top: region.y, width: region.width, height: region.height });
 
-        // Create a partial update operation directly (no overlay compositing needed for base changes)
+        // CRITICAL: Composite overlays on top of the changed region
+        // Otherwise the clock overlay will disappear when base updates!
+        const composites = [];
+        for (const overlay of enabledOverlays) {
+          if (!overlay.enabled) continue;
+
+          const state = pendingOverlayStates ? pendingOverlayStates.get(overlay.name) : overlayStates.get(overlay.name);
+          if (!state || !state.region) continue;
+
+          // Check if overlay region overlaps with changed region
+          const overlayRegion = state.region;
+          const overlaps = !(
+            overlayRegion.x + overlayRegion.width <= region.x ||
+            overlayRegion.x >= region.x + region.width ||
+            overlayRegion.y + overlayRegion.height <= region.y ||
+            overlayRegion.y >= region.y + region.height
+          );
+
+          if (overlaps) {
+            // Generate overlay for this display time
+            const mergedOverlay = {
+              ...overlay,
+              style: state.style,
+              _renderTime: new Date(displayTime)
+            };
+
+            const overlayBuffer = generateOverlay(mergedOverlay, overlayRegion);
+
+            // Calculate position relative to the changed region
+            const relativeX = overlayRegion.x - region.x;
+            const relativeY = overlayRegion.y - region.y;
+
+            composites.push({
+              input: overlayBuffer,
+              left: relativeX,
+              top: relativeY
+            });
+          }
+        }
+
+        // Composite overlays if any overlap
+        if (composites.length > 0) {
+          regionImage = regionImage.composite(composites);
+        }
+
+        const regionBuffer = await regionImage.toBuffer();
+
         const operation = {
           type: 'partial',
           buffer: regionBuffer,
