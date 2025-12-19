@@ -328,33 +328,21 @@ async function initializeAndRun() {
         }
 
         // Batch render multiple frames when queue needs filling
-        // This is much more efficient than one-at-a-time
+        // Parallel rendering for partial updates provides significant speedup
         let batchStartTime = null;
         let batchCount = 0;
+        const MAX_PARALLEL = 5; // Limit parallelism to avoid memory pressure
 
         while (queue.needsMore(currentSecond)) {
           if (batchStartTime === null) {
             batchStartTime = Date.now();
           }
 
-          // CRITICAL: If there's a pending full update that needs rendering, prioritize it
-          // This ensures we don't skip the full update even if queue already has operations past it
-          let displaySecond;
+          // CRITICAL: If there's a pending full update, render it FIRST (serial)
+          // Full updates modify global state and can't be parallelized
           if (nextFullUpdateSecond !== null && nextFullUpdateSecond >= currentSecond) {
-            // Full update is pending and is in the current time range
-            displaySecond = nextFullUpdateSecond;
-            console.log(`Prioritizing pending full update for second ${displaySecond}`);
-          } else {
-            // Normal case: find next gap
-            displaySecond = queue.getNextUnqueuedSecond(currentSecond);
-          }
-          const displayTime = displaySecond * 1000;
-
-          // Check if this should be a full update (base image changed)
-          const isFullUpdate = nextFullUpdateSecond !== null && displaySecond === nextFullUpdateSecond;
-
-          let operation;
-          if (isFullUpdate) {
+            const displaySecond = nextFullUpdateSecond;
+            const displayTime = displaySecond * 1000;
             console.log(`\nRendering FULL update for second ${displaySecond} (new base image)`);
             const fullStartTime = Date.now();
 
@@ -362,7 +350,7 @@ async function initializeAndRun() {
             const baseForRender = pendingBaseImageBuffer || baseImageBuffer;
             const statesForRender = pendingOverlayStates || overlayStates;
 
-            operation = await renderer.renderFullUpdate(baseForRender, enabledOverlays, statesForRender, displayTime);
+            const operation = await renderer.renderFullUpdate(baseForRender, enabledOverlays, statesForRender, displayTime);
 
             // Now swap pending into active (this is the critical moment!)
             if (pendingBaseImageBuffer) {
@@ -377,33 +365,72 @@ async function initializeAndRun() {
             }
 
             nextFullUpdateSecond = null; // Clear flag
+
+            // Check if overwriting
+            const existingOp = queue.operations.get(displaySecond);
+            if (existingOp && perfMonitor.config.enabled) {
+              console.warn(`⚠️  Overwriting existing ${existingOp.type} operation for second ${displaySecond} with full`);
+            }
+
+            queue.enqueue(displaySecond, operation);
+            batchCount++;
             console.log(`✓ Full update rendered in ${Date.now() - fullStartTime}ms`);
-          } else if (enabledOverlays.length === 0) {
-            // No overlays: full updates only (but reuse same base)
-            operation = await renderer.renderFullUpdate(baseImageBuffer, enabledOverlays, overlayStates, displayTime);
-          } else {
-            // Normal partial update (first overlay)
-            const overlay = enabledOverlays[0];
-            const state = overlayStates.get(overlay.name);
-            operation = await renderer.renderPartialUpdate(overlay, state, displayTime);
+
+            // CRITICAL: Recalculate currentSecond after full update
+            currentSecond = Math.floor(Date.now() / 1000);
+            continue; // Continue loop to check if more frames needed
           }
 
-          // Check if we're overwriting an existing operation (potential issue!)
-          const existingOp = queue.operations.get(displaySecond);
-          if (existingOp && perfMonitor.config.enabled) {
-            console.warn(`⚠️  Overwriting existing ${existingOp.type} operation for second ${displaySecond} with ${operation.type}`);
+          // Collect a batch of partial updates to render in parallel
+          const renderBatch = [];
+          while (queue.needsMore(currentSecond) && renderBatch.length < MAX_PARALLEL) {
+            const displaySecond = queue.getNextUnqueuedSecond(currentSecond);
+            const displayTime = displaySecond * 1000;
+
+            // Check if this would be a full update - if so, stop batching
+            if (nextFullUpdateSecond !== null && displaySecond === nextFullUpdateSecond) {
+              break;
+            }
+
+            renderBatch.push({ displaySecond, displayTime });
+
+            // Simulate queue being filled to prevent collecting duplicate seconds
+            queue.enqueue(displaySecond, { type: 'placeholder' });
           }
 
-          queue.enqueue(displaySecond, operation);
-          batchCount++;
-
-          if (perfMonitor.config.enabled && displaySecond % 10 === 0) {
-            const status = queue.getStatus(currentSecond);
-            console.log(`Queue: ${status.size} operations, ${status.secondsAhead}s ahead (${status.range})`);
+          if (renderBatch.length === 0) {
+            break; // No more frames to render
           }
 
-          // CRITICAL: Recalculate currentSecond after rendering to avoid stale values
-          // Rendering takes 100-200ms, so time advances significantly between iterations
+          // Render batch in parallel
+          const renderPromises = renderBatch.map(async ({ displaySecond, displayTime }) => {
+            let operation;
+            if (enabledOverlays.length === 0) {
+              // No overlays: full updates only (but reuse same base)
+              operation = await renderer.renderFullUpdate(baseImageBuffer, enabledOverlays, overlayStates, displayTime);
+            } else {
+              // Normal partial update (first overlay)
+              const overlay = enabledOverlays[0];
+              const state = overlayStates.get(overlay.name);
+              operation = await renderer.renderPartialUpdate(overlay, state, displayTime);
+            }
+            return { displaySecond, operation };
+          });
+
+          const results = await Promise.all(renderPromises);
+
+          // Enqueue all results (replacing placeholders)
+          for (const { displaySecond, operation } of results) {
+            queue.enqueue(displaySecond, operation);
+            batchCount++;
+
+            if (perfMonitor.config.enabled && displaySecond % 10 === 0) {
+              const status = queue.getStatus(currentSecond);
+              console.log(`Queue: ${status.size} operations, ${status.secondsAhead}s ahead (${status.range})`);
+            }
+          }
+
+          // CRITICAL: Recalculate currentSecond after batch rendering
           currentSecond = Math.floor(Date.now() / 1000);
         }
 
