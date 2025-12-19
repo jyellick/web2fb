@@ -63,6 +63,7 @@ let baseImageBuffer = null;
 let overlayStates = new Map(); // name -> { overlay, region, style, baseRegionBuffer, rawMetadata }
 let pendingOverlayStates = null; // New overlay states awaiting full update
 let pendingBaseImageBuffer = null; // New base image awaiting full update
+let preRenderedFullUpdate = null; // Pre-rendered full update operation (raw format)
 let queue = null;
 let renderer = null;
 let scheduler = null;
@@ -217,7 +218,24 @@ async function recaptureBaseImage(reason, enabledOverlays) {
     nextFullUpdateSecond = lastQueued ? lastQueued + 1 : currentSecond + 1;
 
     console.log(`Full update scheduled for second ${nextFullUpdateSecond} (${new Date(nextFullUpdateSecond * 1000).toISOString()})`);
-    console.log(`Old overlay states remain active until full update renders`);
+
+    // Pre-render the full update NOW (during idle time) in raw format
+    // This moves the expensive 631ms render time out of the critical path
+    console.log(`Pre-rendering full update (raw format)...`);
+    const preRenderStart = Date.now();
+    const displayTime = nextFullUpdateSecond * 1000;
+
+    preRenderedFullUpdate = await renderer.renderFullUpdate(
+      newBaseImageBuffer,
+      enabledOverlays,
+      pendingOverlayStates || new Map(),
+      displayTime,
+      { rawOutput: true } // Use raw format for faster write
+    );
+
+    const preRenderDuration = Date.now() - preRenderStart;
+    console.log(`✓ Full update pre-rendered in ${preRenderDuration}ms (raw: ${preRenderedFullUpdate.buffer.length} bytes)`);
+    console.log(`Old overlay states remain active until full update displays`);
     perfMonitor.end(perfOpId, { success: true, duration });
 
   } catch (err) {
@@ -338,21 +356,14 @@ async function initializeAndRun() {
             batchStartTime = Date.now();
           }
 
-          // CRITICAL: If there's a pending full update, render it FIRST (serial)
-          // Full updates modify global state and can't be parallelized
-          if (nextFullUpdateSecond !== null && nextFullUpdateSecond >= currentSecond) {
+          // CRITICAL: If there's a pre-rendered full update, enqueue it (no rendering needed!)
+          // The full update was already rendered during idle time in recaptureBaseImage()
+          if (nextFullUpdateSecond !== null && nextFullUpdateSecond >= currentSecond && preRenderedFullUpdate) {
             const displaySecond = nextFullUpdateSecond;
-            const displayTime = displaySecond * 1000;
-            console.log(`\nRendering FULL update for second ${displaySecond} (new base image)`);
-            const fullStartTime = Date.now();
+            console.log(`\nEnqueuing pre-rendered FULL update for second ${displaySecond} (already rendered!)`);
+            const startTime = Date.now();
 
-            // Use pending states for the full update
-            const baseForRender = pendingBaseImageBuffer || baseImageBuffer;
-            const statesForRender = pendingOverlayStates || overlayStates;
-
-            const operation = await renderer.renderFullUpdate(baseForRender, enabledOverlays, statesForRender, displayTime);
-
-            // Now swap pending into active (this is the critical moment!)
+            // Swap pending states into active (this is the critical moment!)
             if (pendingBaseImageBuffer) {
               baseImageBuffer = pendingBaseImageBuffer;
               pendingBaseImageBuffer = null;
@@ -364,19 +375,24 @@ async function initializeAndRun() {
               console.log(`✓ Overlay states swapped: pending → active`);
             }
 
-            nextFullUpdateSecond = null; // Clear flag
-
             // Check if overwriting
             const existingOp = queue.operations.get(displaySecond);
             if (existingOp && perfMonitor.config.enabled) {
               console.warn(`⚠️  Overwriting existing ${existingOp.type} operation for second ${displaySecond} with full`);
             }
 
-            queue.enqueue(displaySecond, operation);
+            // Enqueue the pre-rendered operation
+            queue.enqueue(displaySecond, preRenderedFullUpdate);
             batchCount++;
-            console.log(`✓ Full update rendered in ${Date.now() - fullStartTime}ms`);
 
-            // CRITICAL: Recalculate currentSecond after full update
+            // Clear the pre-rendered operation
+            preRenderedFullUpdate = null;
+            nextFullUpdateSecond = null;
+
+            const duration = Date.now() - startTime;
+            console.log(`✓ Full update enqueued in ${duration}ms (no rendering - already done!)`);
+
+            // CRITICAL: Recalculate currentSecond
             currentSecond = Math.floor(Date.now() / 1000);
             continue; // Continue loop to check if more frames needed
           }
