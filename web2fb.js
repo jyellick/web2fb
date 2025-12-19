@@ -225,12 +225,18 @@ async function recaptureBaseImage(reason, enabledOverlays) {
     const preRenderStart = Date.now();
     const displayTime = nextFullUpdateSecond * 1000;
 
+    // Remove alpha channel if framebuffer is RGB or RGB565 (not RGBA)
+    const needsAlpha = framebuffer.info.bpp === 32;
+
     preRenderedFullUpdate = await renderer.renderFullUpdate(
       newBaseImageBuffer,
       enabledOverlays,
       pendingOverlayStates || new Map(),
       displayTime,
-      { rawOutput: true } // Use raw format for faster write
+      {
+        rawOutput: true,        // Use raw format for faster write
+        removeAlpha: !needsAlpha // Remove alpha if FB doesn't need it
+      }
     );
 
     const preRenderDuration = Date.now() - preRenderStart;
