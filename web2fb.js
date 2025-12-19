@@ -382,8 +382,13 @@ async function initializeAndRun() {
           }
 
           // Collect a batch of partial updates to render in parallel
+          // Calculate how many frames we need to fill the queue
+          const status = queue.getStatus(currentSecond);
+          const framesNeeded = queue.windowSize - status.size;
+          const batchSize = Math.min(MAX_PARALLEL, framesNeeded);
+
           const renderBatch = [];
-          while (queue.needsMore(currentSecond) && renderBatch.length < MAX_PARALLEL) {
+          for (let i = 0; i < batchSize; i++) {
             const displaySecond = queue.getNextUnqueuedSecond(currentSecond);
             const displayTime = displaySecond * 1000;
 
