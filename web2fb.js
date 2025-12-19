@@ -337,7 +337,17 @@ async function initializeAndRun() {
             batchStartTime = Date.now();
           }
 
-          const displaySecond = queue.getNextUnqueuedSecond(currentSecond);
+          // CRITICAL: If there's a pending full update that needs rendering, prioritize it
+          // This ensures we don't skip the full update even if queue already has operations past it
+          let displaySecond;
+          if (nextFullUpdateSecond !== null && nextFullUpdateSecond >= currentSecond) {
+            // Full update is pending and is in the current time range
+            displaySecond = nextFullUpdateSecond;
+            console.log(`Prioritizing pending full update for second ${displaySecond}`);
+          } else {
+            // Normal case: find next gap
+            displaySecond = queue.getNextUnqueuedSecond(currentSecond);
+          }
           const displayTime = displaySecond * 1000;
 
           // Check if this should be a full update (base image changed)
@@ -376,6 +386,12 @@ async function initializeAndRun() {
             const overlay = enabledOverlays[0];
             const state = overlayStates.get(overlay.name);
             operation = await renderer.renderPartialUpdate(overlay, state, displayTime);
+          }
+
+          // Check if we're overwriting an existing operation (potential issue!)
+          const existingOp = queue.operations.get(displaySecond);
+          if (existingOp && perfMonitor.config.enabled) {
+            console.warn(`⚠️  Overwriting existing ${existingOp.type} operation for second ${displaySecond} with ${operation.type}`);
           }
 
           queue.enqueue(displaySecond, operation);
